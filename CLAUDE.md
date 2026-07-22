@@ -4,14 +4,22 @@ Guidance for Claude Code (and other agents) working in this repository.
 
 ## Project overview
 
-A Django-based phishing email analyzer, deployed on Ubuntu Server with:
+A FastAPI-based phishing email analyzer, deployed on Ubuntu Server with:
 
-- **Database**: PostgreSQL
-- **Web server / app server**: Nginx (reverse proxy) + Gunicorn (WSGI)
+- **Backend**: FastAPI (Python), ASGI
+- **Templates / UI**: Jinja2 templates + Bootstrap (server-rendered, no SPA framework)
+- **Database**: PostgreSQL, accessed via SQLAlchemy; schema changes via Alembic migrations
+- **Web server / app server**: Nginx (reverse proxy) + Uvicorn workers (managed by Gunicorn
+  in production, `gunicorn -k uvicorn.workers.UvicornWorker`)
 - **Authentication**: Windows Server 2025 Active Directory via LDAPS (no local password auth)
 - **CI/CD**: GitHub Actions handles build, test, and deployment
 - **AI assistance**: Claude API is used only to generate a human-readable explanation of
   an analysis result. It never computes, adjusts, or influences the numerical risk score.
+
+> Note: this project originally scaffolded as Django (see git history / TASKS.md Phase 1).
+> It has since been redirected to FastAPI + SQLAlchemy + Alembic. The Django-specific
+> `app/` tree from that earlier scaffold is superseded and will be replaced — see TASKS.md
+> for the migration plan.
 
 ## Core architectural rule — read this first
 
@@ -34,13 +42,15 @@ engine written in Python.** This is the most important constraint in the project
 
 The repo uses a hybrid layout under `app/`: a shared horizontal layer
 (`config/`, `core/`, `database/`, `models/`, `schemas/`, `services/`,
-`utils/`) plus vertical domain apps (`auth/`, `api/`, `email_parser/`,
-`phishing_detection/`, `ai_analysis/`), each owning its own models, schemas,
-services, and migrations. `phishing_detection/` contains the deterministic
-scoring engine described above; `ai_analysis/` is the only place Claude API
-calls are made, and only for explanation text. Full rationale and a
-feature-placement guide live in [docs/architecture.md](docs/architecture.md)
-— read it before adding a new top-level directory.
+`utils/`) plus vertical domain packages (`auth/`, `api/`, `email_parser/`,
+`phishing_detection/`, `ai_analysis/`), each owning its own SQLAlchemy models,
+Pydantic schemas, and services. `phishing_detection/` contains the
+deterministic scoring engine described above; `ai_analysis/` is the only
+place Claude API calls are made, and only for explanation text. Full
+rationale and a feature-placement guide live in
+[docs/architecture.md](docs/architecture.md) — read it before adding a new
+top-level directory. **This structure is being rebuilt for FastAPI** — see
+TASKS.md Phase 1 for the current state of that migration.
 
 ## Branching strategy
 
@@ -61,31 +71,37 @@ Do not commit directly to `main` or `develop`; work happens on `feature/*` branc
   complete while tests are failing, skipped, or not yet written. Run the test suite before
   reporting completion.
 - **No secrets in source control.** No API keys, LDAP bind credentials, database
-  passwords, Django `SECRET_KEY`, or certificates in the repo, in code, or in commit
-  history. All secrets are supplied via environment variables (or a secrets manager) and
-  read through `os.environ` / `django-environ` at runtime.
+  passwords, app secret keys, or certificates in the repo, in code, or in commit history.
+  All secrets are supplied via environment variables (or a secrets manager) and read
+  through a typed settings object (e.g. `pydantic-settings`) at runtime.
 - **Environment variables for configuration.** Anything that differs between dev, CI, and
-  production (DB connection info, `ALLOWED_HOSTS`, LDAP/AD settings, Claude API key,
-  Gunicorn/Nginx settings, `DEBUG`) must be configurable via environment variables, never
-  hardcoded.
-- **Secure Django defaults.** `DEBUG = False` outside local dev, `SECRET_KEY` from the
-  environment, `ALLOWED_HOSTS` explicitly set, HTTPS/HSTS and secure cookie settings
-  enabled in production, CSRF protection on, and dependencies kept current. Don't weaken
-  any of these to make something "just work" — fix the underlying config instead.
+  production (DB connection info, allowed hosts/origins, LDAP/AD settings, Claude API key,
+  Uvicorn/Gunicorn/Nginx settings, debug flags) must be configurable via environment
+  variables, never hardcoded.
+- **Secure defaults.** Debug/reload mode off outside local dev, secret keys and DB
+  credentials from the environment only, allowed hosts/CORS origins explicitly set (no
+  wildcard `*` in production), HTTPS/HSTS and secure cookie flags enabled in production,
+  CSRF protection on any session-authenticated form endpoint (FastAPI has no built-in CSRF
+  protection — this must be added explicitly, e.g. via middleware, for the login/session
+  flow), and dependencies kept current. Don't weaken any of these to make something "just
+  work" — fix the underlying config instead.
 - **Type hints.** All new/modified Python functions and methods should have type hints on
   parameters and return values.
 - **Clear comments.** Comment the *why*, not the *what* — especially around scoring rule
   thresholds, LDAPS/AD integration quirks, and anything security-sensitive. Avoid restating
   what the code obviously does.
 - **Documentation updates with infrastructure changes.** Any change touching deployment,
-  Nginx/Gunicorn config, PostgreSQL setup, LDAPS/AD integration, or GitHub Actions workflows
-  must come with a corresponding update to the relevant docs in the same PR.
+  Nginx/Uvicorn/Gunicorn config, PostgreSQL/Alembic setup, LDAPS/AD integration, or GitHub
+  Actions workflows must come with a corresponding update to the relevant docs in the same
+  PR.
 
 ## Testing
 
-- Run the full test suite before considering any task complete.
+- Run the full test suite (`pytest`) before considering any task complete.
 - Scoring engine rules require dedicated unit tests; do not rely on integration tests alone
   to cover rule-level logic.
+- API endpoint tests use FastAPI's `TestClient`/`httpx`; async code paths use
+  `pytest-asyncio`.
 - When mocking the Claude API in tests, only mock the explanation-generation call — never
   design a test in a way that implies Claude is part of the scoring path.
 
@@ -100,6 +116,6 @@ Do not commit directly to `main` or `develop`; work happens on `feature/*` branc
 
 - Do not let any LLM-generated content influence, adjust, or gate the numerical risk score.
 - Do not commit `.env` files, credentials, certificates, or API keys.
-- Do not disable Django security middleware/settings to unblock local testing without
-  reverting before merge.
+- Do not disable security middleware/settings (CORS, trusted host, CSRF, secure cookies)
+  to unblock local testing without reverting before merge.
 - Do not mark work complete with failing, skipped, or missing tests.

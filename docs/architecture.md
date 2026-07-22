@@ -4,29 +4,29 @@
 
 This repository combines two patterns:
 
-1. **A shared horizontal layer** (`app/config`, `app/core`, `app/database`,
-   `app/models`, `app/schemas`, `app/services`, `app/utils`) for code genuinely
-   used by more than one domain.
-2. **Vertical domain apps** (`app/auth`, `app/api`, `app/email_parser`,
-   `app/phishing_detection`, `app/ai_analysis`), each a self-contained Django
-   app owning its own `models.py`, `schemas.py`, `services.py`, and
-   `migrations/`.
+1. **A shared horizontal layer** (`app/core`, `app/database`, `app/models`,
+   `app/schemas`, `app/services`, `app/utils`) for code genuinely used by more
+   than one domain, plus `app/config.py` and `app/main.py` for app-level
+   wiring.
+2. **Vertical domain packages** (`app/auth`, `app/api`, `app/email_parser`,
+   `app/phishing_detection`, `app/ai_analysis`), each owning its own
+   `models.py` (SQLAlchemy), `schemas.py` (Pydantic), and `services.py`.
 
-Domain-specific code lives in its domain app, not in the shared layer. The
-shared layer only holds things with no single owning domain (e.g. an abstract
-`TimeStampedModel` mixin, or the pipeline that orchestrates all three
-analysis domains in order). This avoids two folders being responsible for the
-same thing.
+Domain-specific code lives in its domain package, not in the shared layer.
+The shared layer only holds things with no single owning domain (e.g. a
+`TimeStampedMixin`, or the pipeline that orchestrates all three analysis
+domains in order). This avoids two folders being responsible for the same
+thing.
 
 ## The analysis pipeline
 
 ```
 raw email
-   -> app/email_parser      (parse into structured data)
-   -> app/phishing_detection (deterministic risk score)
-   -> app/ai_analysis        (Claude-generated explanation of that score)
+   -> app/email_parser        (parse into structured data)          [Phase 3]
+   -> app/phishing_detection  (deterministic risk score)             [Phase 4]
+   -> app/ai_analysis         (Claude-generated explanation of that score) [Phase 7]
    -> app/services/pipeline.py orchestrates the three calls above
-   -> app/api                (exposes the result over HTTP)
+   -> app/api                 (exposes the result over HTTP)
 ```
 
 **The score from `phishing_detection` is never altered after the fact.**
@@ -39,24 +39,45 @@ text. See CLAUDE.md for why this boundary is non-negotiable.
 |-------------------------------------------------|--------------------------------------------|
 | A new scoring rule                              | `app/phishing_detection/rules/<rule>.py` + test in `tests/unit/` |
 | A new field on the parsed-email data contract    | `app/email_parser/schemas.py` |
-| A new persisted model for any domain             | that domain's own `models.py` |
+| A new persisted model for any domain             | that domain's own `models.py` (SQLAlchemy) + an Alembic revision |
 | A new HTTP endpoint                              | `app/api/v1/` (routing) — calls into `app/services/pipeline.py` |
-| A new AD/LDAP attribute needed at login          | `app/auth/backends.py` (and `app/auth/models.py` if it must be cached locally) |
+| A new AD/LDAP attribute needed at login          | `app/auth/ldap_backend.py` (and `app/auth/models.py` if it must be cached locally) |
 | A cross-domain orchestration step                | `app/services/` |
-| A mixin/base class used by 2+ domain apps        | `app/models/`, `app/schemas/`, or `app/core/` as appropriate |
+| A mixin/base class used by 2+ domain packages    | `app/models/`, `app/schemas/`, or `app/core/` as appropriate |
 | A generic helper with no domain ownership        | `app/utils/` |
-| Nginx/Gunicorn/deploy changes                    | `docker/`, `.github/workflows/`, and this file |
+| Nginx/Uvicorn/Gunicorn/deploy changes            | `docker/`, `.github/workflows/`, and this file |
 
-## Deviations from a generic/FastAPI-style layout
+## Database and migrations (Phase 5+)
 
-- **No `alembic.ini`.** Django ships its own migration framework
-  (`manage.py makemigrations` / `migrate`), tracked per-app under
-  `<app>/migrations/`. Alembic is for SQLAlchemy-based projects; adding it
-  here would create two competing migration systems for the same database.
-- **`models/`, `schemas/`, `services/` are shared-only, not centralized.**
-  Each domain app keeps its own `models.py`/`schemas.py`/`services.py`. This
-  keeps Django's migration-per-app convention intact and avoids one giant
-  `models/` package that every domain has to reach into.
-- **`app.auth`'s Django app label is `capstone_auth`**, not `auth` — the
-  default label collides with `django.contrib.auth`. See
-  `app/auth/apps.py`.
+- Models are SQLAlchemy declarative classes, living in each domain package's
+  own `models.py`, built on the shared base in `app/database/base.py`.
+- Schema changes are tracked as Alembic revisions under `alembic/versions/`,
+  applied with `alembic upgrade head`. Every model change ships with its
+  revision in the same PR — no implicit/auto-created schema drift.
+- `app/models/` holds only shared, reusable mixins (e.g. a timestamp mixin) —
+  never a concrete, queryable table. Concrete tables belong to the domain
+  package that owns them, so it's obvious what a migration is "for."
+
+## Configuration and templates (Phase 2)
+
+- `app/config.py` defines a single `Settings` (pydantic-settings) class read
+  from environment variables (`.env` locally, real env vars in CI/production)
+  — see CLAUDE.md's "no secrets in source control" rule.
+- `app/templates/` holds Jinja2 templates; `base.html` is the shared layout
+  (Bootstrap CDN + a `static/css/main.css` override hook). Page-specific
+  templates extend it with `{% extends "base.html" %}` and override the
+  `content` block.
+- `app/static/` is mounted at `/static` in `app/main.py` via FastAPI's
+  `StaticFiles`.
+
+## History: framework pivot
+
+This project originally scaffolded as Django, then moved to FastAPI +
+SQLAlchemy + Alembic (see TASKS.md Phase 1). Two points that fall out of that:
+
+- **FastAPI has no built-in CSRF protection.** Django did; FastAPI doesn't.
+  Any session-authenticated POST route (the Phase 6 login form, in
+  particular) needs an explicit CSRF mechanism added — see CLAUDE.md.
+- **`app.auth`'s Django app-label collision note no longer applies.** That
+  was a Django-specific `INSTALLED_APPS` concern; FastAPI has no equivalent
+  app registry, so there's nothing to rename here.

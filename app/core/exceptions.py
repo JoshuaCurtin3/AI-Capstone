@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class AppError(Exception):
-    """Base class for all application-raised (non-Django) errors."""
+    """Base class for all application-raised (non-framework) errors."""
 
 
 class ConfigurationError(AppError):
