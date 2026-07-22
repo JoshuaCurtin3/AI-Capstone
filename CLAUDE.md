@@ -30,6 +30,18 @@ engine written in Python.** This is the most important constraint in the project
 - Every scoring rule lives in the scoring engine module and must be independently unit
   tested (see Testing below). Do not add a new rule without a corresponding test.
 
+## Repository structure
+
+The repo uses a hybrid layout under `app/`: a shared horizontal layer
+(`config/`, `core/`, `database/`, `models/`, `schemas/`, `services/`,
+`utils/`) plus vertical domain apps (`auth/`, `api/`, `email_parser/`,
+`phishing_detection/`, `ai_analysis/`), each owning its own models, schemas,
+services, and migrations. `phishing_detection/` contains the deterministic
+scoring engine described above; `ai_analysis/` is the only place Claude API
+calls are made, and only for explanation text. Full rationale and a
+feature-placement guide live in [docs/architecture.md](docs/architecture.md)
+— read it before adding a new top-level directory.
+
 ## Branching strategy
 
 - `main` — production-ready code only. Deployed via GitHub Actions.

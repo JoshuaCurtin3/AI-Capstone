@@ -1,0 +1,24 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    needs: []
+    # TODO: add `needs: [lint-and-test]` once CI workflow is referenced as a
+    # required check, and configure the SSH/deploy secrets below.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Ubuntu Server
+        run: echo "TODO: wire up SSH deploy to the Ubuntu Server host (see scripts/deploy.sh)"
+        # TODO: replace with an SSH-based deploy step, e.g.:
+        # uses: appleboy/ssh-action@v1
+        # with:
+        #   host: ${{ secrets.DEPLOY_HOST }}
+        #   username: ${{ secrets.DEPLOY_USER }}
+        #   key: ${{ secrets.DEPLOY_SSH_KEY }}
+        #   script: bash scripts/deploy.sh

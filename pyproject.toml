@@ -1,0 +1,24 @@
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+strict = true
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "app.config.settings.test"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "app.config.settings.test"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
