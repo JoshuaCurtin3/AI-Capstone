@@ -78,6 +78,14 @@ uvicorn app.main:app --reload
 pytest
 ```
 
+## Code quality
+
+```bash
+ruff check .
+black --check .
+mypy app
+```
+
 `.github/workflows/ci.yml` runs `ruff`, `black --check`, `mypy`, and `pytest` on every
 push/PR to `main`/`develop`.
 
