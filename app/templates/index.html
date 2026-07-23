@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Home{% endblock %}
+
+{% block content %}
+<div class="p-5 mb-4 bg-body-tertiary rounded-3">
+    <h1 class="display-5 fw-bold">{{ app_name }}</h1>
+    <p class="col-md-8 fs-4">
+        Upload a suspicious email and get a deterministic phishing risk score, backed
+        by an AI-generated explanation of the result.
+    </p>
+</div>
+
+<div class="row g-4">
+    <div class="col-md-4">
+        <h3 class="h4">Deterministic scoring</h3>
+        <p class="text-muted">
+            Every risk score comes from a transparent, rule-based engine — never from
+            the AI model.
+        </p>
+    </div>
+    <div class="col-md-4">
+        <h3 class="h4">AI-generated explanations</h3>
+        <p class="text-muted">
+            Claude turns the triggered rules into a clear, human-readable summary of
+            the result.
+        </p>
+    </div>
+    <div class="col-md-4">
+        <h3 class="h4">Secure by default</h3>
+        <p class="text-muted">
+            Active Directory authentication, environment-based configuration, and no
+            secrets in source control.
+        </p>
+    </div>
+</div>
+{% endblock %}

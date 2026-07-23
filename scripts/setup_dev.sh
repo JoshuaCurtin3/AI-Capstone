@@ -14,4 +14,4 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-python manage.py migrate
+echo "Setup complete. Run: uvicorn app.main:app --reload"

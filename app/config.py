@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     debug: bool = False
     secret_key: str
 
+    #: "development" or "production" — gates dev-only conveniences (e.g. the
+    #: interactive API docs) without duplicating a whole settings hierarchy.
+    environment: str = "development"
+
 
 @lru_cache
 def get_settings() -> Settings:

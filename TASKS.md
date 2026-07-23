@@ -68,65 +68,93 @@ dependencies remaining.
 ## Phase 2 – Application Foundation
 
 - [x] FastAPI setup
-- [x] Configuration management
-- [x] Logging *(formatter/filter module scaffolded in `app/core/logging.py`; no
-      custom formatters needed yet — default logging is sufficient until a
-      concrete need arises)*
-- [x] HTML templates
-- [x] Bootstrap layout
+- [x] Configuration management *(includes an `environment` setting that gates
+      `/docs`/`/redoc` — dev-only conveniences hidden outside development)*
+- [x] Logging *(`app/core/logging.py` configures root logging at startup, level driven
+      by `Settings.debug`)*
+- [x] HTML templates *(base layout + home page + error page)*
+- [x] Bootstrap layout *(navbar + footer, not just a bare page)*
 - [x] Health endpoint
+- [x] Error handling *(custom 404/redirect-class and unhandled-exception handlers,
+      rendered as a Bootstrap error page; never leaks exception details unless
+      `Settings.debug` is on)*
 - [x] Testing framework
 
-**Goal:** A runnable FastAPI app with typed environment-based settings, structured
-logging, a base Jinja2 + Bootstrap layout, a `/health` endpoint, and a working pytest
+**Goal:** A runnable, production-shaped FastAPI app: typed environment-based settings
+(with a dev/production toggle), structured logging, a full Bootstrap UI shell (nav +
+footer + home page), centralized error handling that never leaks internals outside
+debug mode, a `/health` endpoint, and a working pytest + lint + type-check + CI
 harness — the foundation every later phase builds on.
 
 **Files created:**
-- `app/main.py` — FastAPI app instance, router/static/template mounting
-- `app/config.py` — `pydantic-settings` `Settings` class reading env vars (no hardcoded
-  values, per CLAUDE.md)
-- `app/core/logging.py` — structured logging setup
-- `app/templates/base.html` — Jinja2 base layout pulling in Bootstrap
-- `app/static/css/`, `app/static/js/` — Bootstrap/custom assets
+- `app/main.py` — FastAPI app instance; router/static/template mounting; logging setup;
+  `/docs`/`/redoc` gated by `Settings.environment`; HTTP + unhandled-exception handlers
+- `app/config.py` — `pydantic-settings` `Settings` class (`app_name`, `debug`,
+  `secret_key`, `environment`), reading env vars only, per CLAUDE.md
+- `app/core/logging.py` — `configure_logging()`, called once at startup
+- `app/templates/base.html` — shared layout: navbar, footer, Bootstrap CDN + local
+  `static/css/main.css` and `static/js/main.js`
+- `app/templates/index.html` — home page, extends `base.html`
+- `app/templates/error.html` — shared error page (used for both HTTP errors and
+  unhandled exceptions), extends `base.html`
+- `app/static/css/main.css`, `app/static/js/main.js` — real (if minimal) assets, not
+  just empty placeholder directories
 - `app/api/health.py` — `GET /health` endpoint
-- `app/static/css/main.css` — empty override hook loaded by `base.html`
 - `tests/conftest.py` — `TestClient` fixture (env vars set via `pytest_configure`)
 - `tests/unit/test_health.py`
-- `tests/unit/test_index.py` — verifies `/` renders HTML with Bootstrap + app name
-- `requirements.txt` rewritten: `fastapi`, `uvicorn`, `jinja2`, `python-multipart`,
-  `pydantic-settings`, `pytest`, `httpx`, `ruff`, `black`, `mypy` (drops `Django`,
-  `django-auth-ldap`, `djangorestframework`; later-phase deps listed as comments only)
-- `pyproject.toml` updated: dropped `mypy_django_plugin`/`django-stubs` config
-- `.env.example` updated: `APP_SECRET_KEY`/`APP_DEBUG` replace the `DJANGO_*` vars
-- `README.md` updated: FastAPI setup/run instructions, corrected repo layout
-- `docs/architecture.md`, `docs/deployment.md` updated: FastAPI/SQLAlchemy/Alembic
-  throughout, dropped the now-incorrect "why we skip Alembic" section
+- `tests/unit/test_index.py` — home page renders HTML, navbar, and footer
+- `tests/unit/test_error_handling.py` — 404 renders the error page; unhandled
+  exceptions return 500 without leaking details when `debug` is off, and do include
+  details when `debug` is on
+- `requirements.txt`, `pyproject.toml`, `.env.example` (adds `APP_ENVIRONMENT`),
+  `README.md`, `docs/architecture.md`, `docs/deployment.md` — see Phase 1 for the
+  initial FastAPI-stack rewrite; this round only adds `APP_ENVIRONMENT`
+- `scripts/setup_dev.sh` — dropped the leftover `python manage.py migrate` line
+- `.github/workflows/ci.yml` — rewritten to a basic FastAPI test workflow (checkout,
+  install deps, ruff, black --check, mypy, pytest) — no Postgres service, no Django
+  env vars; brought forward from Phase 9 since a working CI test workflow was
+  explicitly requested for this phase
 
 **Dependencies:** Phase 1 skeleton in place.
 
 **Estimated complexity:** Medium
 
-**Tests that must pass — VERIFIED PASSING:**
+**Tests that must pass — VERIFIED PASSING (7/7):**
 - `test_health.py`: `GET /health` returns `200` with the expected JSON body. ✅
-- `test_index.py`: `GET /` returns `200`, `text/html`, contains the app name and
-  Bootstrap markup. ✅
+- `test_index.py` (3 tests): `GET /` returns `200`, `text/html`, contains the app name,
+  Bootstrap markup, a navbar, and a footer. ✅
+- `test_error_handling.py` (3 tests): unknown routes render the custom 404 page;
+  unhandled exceptions return 500 and hide the real exception message when
+  `debug=False`, but do include it when `debug=True`. ✅
 - App starts with no import/config errors (`TestClient(app)` construction succeeds). ✅
 
 **Completion criteria — VERIFIED:**
-- `uvicorn app.main:app` runs locally without error — confirmed via a real Uvicorn boot
-  on `127.0.0.1:8123`; both `/health` and `/` returned `200`. ✅
+- `uvicorn app.main:app` runs locally without error — confirmed via real Uvicorn boots;
+  `/health`, `/`, an unknown route (404 → custom page), and `/docs` (200 in dev, 404 in
+  production via `APP_ENVIRONMENT=production`) all behave correctly. ✅
 - `/health` returns 200. ✅
-- Base template renders with Bootstrap loaded. ✅
-- `pytest` runs green (2 passed). ✅
+- Base template renders with Bootstrap, a navbar, and a footer. ✅
+- `pytest` runs green (7 passed). ✅
 - `ruff check .`, `black --check .`, and `mypy app` all pass clean (one accepted
   `# type: ignore[call-arg]` in `app/config.py` for a known pydantic-settings/mypy false
   positive on required-but-env-sourced fields). ✅
 - Settings load entirely from environment variables (`.env`/`APP_*`); nothing secret is
   hardcoded. ✅
+- `.github/workflows/ci.yml` runs the same lint/type/test checks in CI. *(Workflow
+  syntax verified locally with `actionlint`-equivalent manual review; not yet observed
+  green in an actual GitHub Actions run — will be confirmed by the push in this PR.)*
 
-**Git commit message suggestion:** `feat: scaffold FastAPI app with health endpoint, base template, and test harness`
+**Bug caught and fixed during this round:** passing `debug=settings.debug` straight
+into `FastAPI(...)` made Starlette's own raw-traceback debug page take over on any
+unhandled exception, completely bypassing the custom `unhandled_exception_handler` —
+i.e., it would have leaked full stack traces whenever `APP_DEBUG=true`, regardless of
+the handler's own leak-prevention logic. Fixed by always constructing `FastAPI(debug=False)`
+and letting `unhandled_exception_handler` be the sole place that decides whether to
+include exception details, gated on `Settings.debug` at request time.
 
-**Status: COMPLETE** (committed and pushed — see repo history).
+**Git commit message suggestion:** `feat: expand Phase 2 foundation with nav/footer/error handling and CI`
+
+**Status: COMPLETE.**
 
 ---
 
@@ -505,12 +533,14 @@ silently added — decide whether to fold them into an existing phase:
 ### Current milestone
 
 **Phase 2 – Application Foundation — complete.** The Django scaffold has been fully
-replaced with a working FastAPI app: `app/main.py` boots via Uvicorn, `/health` and `/`
-both return 200, config is environment-driven via `pydantic-settings`, the base
-Jinja2 + Bootstrap layout renders, and the pytest/ruff/black/mypy toolchain all pass
-clean. Verified locally (see Phase 2's completion criteria above); not yet verified in
-GitHub Actions CI, since `.github/workflows/ci.yml` still needs a rewrite for the
-FastAPI stack (that rewrite is scoped to Phase 9, not this phase).
+replaced with a production-shaped FastAPI app: a full Bootstrap UI shell (navbar,
+footer, home page), centralized error handling (custom 404/500 pages that never leak
+exception internals outside debug mode), environment-driven configuration with a
+dev/production toggle, structured logging, a `/health` endpoint, and a pytest suite
+(7 tests) all passing alongside clean ruff/black/mypy runs. `.github/workflows/ci.yml`
+has also been rewritten to a basic FastAPI-appropriate test workflow (no Postgres, no
+Django env vars) — verified locally to match what CI will run; not yet observed green
+in an actual GitHub Actions run (confirmed once this branch's push triggers it).
 
 ### Next milestone
 
@@ -522,16 +552,17 @@ work).
 Phases 3 through 10 in full. Notably still stale/untouched (intentionally, per phase
 scoping): `Dockerfile`, `docker-compose.yml`, `docker/gunicorn/gunicorn.conf.py` (still
 reference the removed `app.config.wsgi` — corrected in Phase 8), and
-`.github/workflows/ci.yml`/`deploy.yml` (still reference `manage.py`-era assumptions —
-corrected in Phase 9).
+`.github/workflows/deploy.yml` (still reference `manage.py`-era assumptions —
+corrected in Phase 9). `ci.yml` itself is now current as of this phase.
 
 ### Known risks
 
 1. ~~**Framework pivot cost.**~~ **Resolved in Phase 1/2.** The Django-specific artifacts
    (`manage.py`, per-app `apps.py`/`migrations/`, Django settings) have been removed and
-   replaced with a working FastAPI app. Remaining fallout is isolated to `Dockerfile`,
-   `docker-compose.yml`, and the GitHub Actions workflows, which still assume the old
-   stack — tracked as Phase 8/9 work, not a blocker for Phase 3+.
+   replaced with a working FastAPI app; `.github/workflows/ci.yml` is also now current.
+   Remaining fallout is isolated to `Dockerfile`, `docker-compose.yml`, and
+   `.github/workflows/deploy.yml`, which still assume the old stack — tracked as Phase
+   8/9 work, not a blocker for Phase 3+.
 2. **SPF/DKIM/DMARC determinism tension.** Live re-verification requires DNS lookups,
    which are network-dependent and can change over time — in tension with CLAUDE.md's
    "no hidden state" determinism rule. **Recommendation for Phase 4:** parse the

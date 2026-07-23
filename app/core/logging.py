@@ -1,6 +1,18 @@
-"""Custom logging formatters/filters shared across the project.
+"""Logging configuration for the application.
 
-The actual logging.dictConfig() setup lives in app/config.py; this module
-holds reusable formatter/filter classes referenced from there. TODO: add a
-formatter/filter here as needed.
+Called once at process startup (see app/main.py). Verbosity is driven by
+Settings.debug rather than hardcoded, per CLAUDE.md's environment-variable
+configuration rule.
 """
+
+from __future__ import annotations
+
+import logging
+
+
+def configure_logging(*, debug: bool) -> None:
+    """Configure root logging handlers/format/level for the whole process."""
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )

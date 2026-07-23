@@ -57,11 +57,29 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+`APP_ENVIRONMENT=development` (the default) enables the interactive API docs at
+`/docs`/`/redoc`; set it to anything else (e.g. `production`) to disable them.
+
+## Application foundation (Phase 2)
+
+- **Pages**: `/` (home) and `/health` (JSON health check), sharing a common
+  `app/templates/base.html` layout with a Bootstrap navbar and footer.
+- **Error handling**: unknown routes and other HTTP errors, plus any unhandled
+  exception, render the same Bootstrap-styled error page. Exception details are only
+  included in the response when `APP_DEBUG=true` — otherwise a generic message is
+  shown and the real exception is logged server-side.
+- **Configuration**: `app/config.py` defines a single `Settings` object
+  (`APP_SECRET_KEY`, `APP_DEBUG`, `APP_ENVIRONMENT`, `APP_NAME`) read from the
+  environment — see `.env.example`.
+
 ## Running tests
 
 ```bash
 pytest
 ```
+
+`.github/workflows/ci.yml` runs `ruff`, `black --check`, `mypy`, and `pytest` on every
+push/PR to `main`/`develop`.
 
 Every phishing-detection rule in `app/phishing_detection/rules/` must have a
 corresponding test under `tests/unit/`. A feature is not considered complete until its

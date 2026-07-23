@@ -10,31 +10,10 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: test_db
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     env:
-      DJANGO_SETTINGS_MODULE: app.config.settings.test
-      DJANGO_SECRET_KEY: ci-test-secret-key
-      DJANGO_DEBUG: "False"
-      DJANGO_ALLOWED_HOSTS: localhost
-      POSTGRES_DB: test_db
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_password
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: 5432
+      # No database yet (added in Phase 5) — only what app/config.py requires.
+      APP_SECRET_KEY: ci-test-secret-key
+      APP_DEBUG: "false"
 
     steps:
       - uses: actions/checkout@v4
@@ -56,4 +35,4 @@ jobs:
         run: mypy app
 
       - name: Run tests
-        run: pytest --cov=app
+        run: pytest

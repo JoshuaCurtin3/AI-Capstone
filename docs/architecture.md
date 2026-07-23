@@ -62,13 +62,36 @@ text. See CLAUDE.md for why this boundary is non-negotiable.
 
 - `app/config.py` defines a single `Settings` (pydantic-settings) class read
   from environment variables (`.env` locally, real env vars in CI/production)
-  — see CLAUDE.md's "no secrets in source control" rule.
-- `app/templates/` holds Jinja2 templates; `base.html` is the shared layout
-  (Bootstrap CDN + a `static/css/main.css` override hook). Page-specific
-  templates extend it with `{% extends "base.html" %}` and override the
-  `content` block.
+  — see CLAUDE.md's "no secrets in source control" rule. `Settings.environment`
+  ("development"/"production") gates dev-only conveniences — currently the
+  interactive `/docs`/`/redoc` API docs — without a full settings-file
+  hierarchy.
+- `app/templates/` holds Jinja2 templates; `base.html` is the shared layout:
+  a Bootstrap navbar, a `content` block, and a footer, plus Bootstrap CDN +
+  `static/css/main.css`/`static/js/main.js` hooks. Page-specific templates
+  extend it with `{% extends "base.html" %}` and override `title`/`content`
+  (see `index.html`). `app_name` and `current_year` are registered as Jinja
+  globals in `app/main.py` so every template can use them without repeating
+  them in each route's context dict.
+- `error.html` is the single template used for both HTTP errors (404, etc.)
+  and unhandled exceptions — see the "Error handling" section below.
 - `app/static/` is mounted at `/static` in `app/main.py` via FastAPI's
   `StaticFiles`.
+
+## Error handling (Phase 2)
+
+- `app/main.py` registers two handlers: one for `StarletteHTTPException`
+  (renders `error.html` with the real status code/detail — e.g. a 404) and
+  one for the base `Exception` (logs the real error server-side, then
+  renders `error.html` with a generic message unless `Settings.debug` is
+  true, in which case the real exception message is shown).
+- **Do not pass `debug=` to the `FastAPI(...)` constructor.** Doing so makes
+  Starlette's own debug-mode traceback page take over on any unhandled
+  exception, bypassing the custom `Exception` handler entirely — which would
+  leak full stack traces whenever debug is on, regardless of the handler's
+  own logic. `app/main.py` always constructs `FastAPI(debug=False)` and lets
+  the registered handler be the single place that decides what to show,
+  driven by `Settings.debug` at request time.
 
 ## History: framework pivot
 
