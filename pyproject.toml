@@ -9,6 +9,21 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom (Depends/File/Form/Query/...) relies on
+# call expressions as parameter defaults - these are framework sentinels
+# evaluated per-request, not the mutable-default footgun B008 guards against.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Body",
+]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

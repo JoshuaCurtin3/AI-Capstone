@@ -72,6 +72,19 @@ uvicorn app.main:app --reload
   (`APP_SECRET_KEY`, `APP_DEBUG`, `APP_ENVIRONMENT`, `APP_NAME`) read from the
   environment — see `.env.example`.
 
+## Email parsing (Phase 3)
+
+- **Page**: `/upload` — paste a raw email or upload an `.eml` file (max size set by
+  `APP_MAX_EMAIL_UPLOAD_BYTES`, default 10 MB).
+- **Parsing**: `app/email_parser/parser.py` extracts headers (Subject, From, To, Date,
+  Reply-To, Return-Path, Message-ID, every Authentication-Results/Received header),
+  plain-text and HTML bodies, URLs (flagging obfuscated display-text-vs-href
+  mismatches), and attachment metadata (filename, content-type, size, SHA-256) using
+  only the Python standard library — no new dependencies.
+- **Safety**: attachment payloads are only ever hashed/sized in memory, never written
+  to disk or executed; extracted URLs are never fetched/visited; malformed input is
+  handled without crashing (see `tests/unit/test_email_parser_safety.py`).
+
 ## Running tests
 
 ```bash

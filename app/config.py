@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     #: interactive API docs) without duplicating a whole settings hierarchy.
     environment: str = "development"
 
+    #: Caps raw email size (pasted or uploaded) accepted by the /upload
+    #: endpoint, bounding memory use during parsing (Phase 3 "safe parsing").
+    max_email_upload_bytes: int = 10_000_000
+
 
 @lru_cache
 def get_settings() -> Settings:

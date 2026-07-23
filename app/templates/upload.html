@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Upload{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Analyze an email</h1>
+
+<form method="post" action="/upload" enctype="multipart/form-data" class="mb-5">
+    <div class="mb-3">
+        <label for="raw_email_text" class="form-label">Paste a raw email</label>
+        <textarea
+            class="form-control"
+            id="raw_email_text"
+            name="raw_email_text"
+            rows="10"
+            placeholder="From: ...&#10;To: ...&#10;Subject: ...&#10;&#10;Message body"></textarea>
+    </div>
+    <div class="mb-3">
+        <label for="file" class="form-label">...or upload an .eml file</label>
+        <input class="form-control" type="file" id="file" name="file" accept=".eml">
+    </div>
+    <button type="submit" class="btn btn-primary">Parse email</button>
+</form>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if parsed %}
+<h2 class="h4">Headers</h2>
+<table class="table table-sm table-bordered">
+    <tbody>
+        <tr><th scope="row">Subject</th><td>{{ parsed.subject or "—" }}</td></tr>
+        <tr><th scope="row">From</th><td>{{ parsed.from_address or "—" }}</td></tr>
+        <tr><th scope="row">To</th><td>{{ parsed.to_addresses|join(", ") if parsed.to_addresses else "—" }}</td></tr>
+        <tr><th scope="row">Date</th><td>{{ parsed.date or "—" }}</td></tr>
+        <tr><th scope="row">Reply-To</th><td>{{ parsed.reply_to or "—" }}</td></tr>
+        <tr><th scope="row">Return-Path</th><td>{{ parsed.return_path or "—" }}</td></tr>
+        <tr><th scope="row">Message-ID</th><td>{{ parsed.message_id or "—" }}</td></tr>
+    </tbody>
+</table>
+
+{% if parsed.authentication_results %}
+<h2 class="h4">Authentication-Results</h2>
+<ul>
+    {% for entry in parsed.authentication_results %}
+    <li><code>{{ entry }}</code></li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if parsed.received_headers %}
+<h2 class="h4">Received headers ({{ parsed.received_headers|length }})</h2>
+<ol>
+    {% for entry in parsed.received_headers %}
+    <li><code>{{ entry }}</code></li>
+    {% endfor %}
+</ol>
+{% endif %}
+
+<h2 class="h4">Body</h2>
+{% if parsed.text_body %}
+<h3 class="h6">Plain text</h3>
+<pre class="border rounded p-2 bg-body-tertiary">{{ parsed.text_body }}</pre>
+{% endif %}
+{% if parsed.html_body %}
+<!-- Rendered as escaped text on purpose - never as live HTML - so a
+     phishing email's markup/script content can never execute in the
+     analyst's browser. -->
+<h3 class="h6">HTML source (shown as text, never rendered)</h3>
+<pre class="border rounded p-2 bg-body-tertiary">{{ parsed.html_body }}</pre>
+{% endif %}
+{% if not parsed.text_body and not parsed.html_body %}
+<p class="text-muted">No body content found.</p>
+{% endif %}
+
+<h2 class="h4">URLs found ({{ parsed.urls|length }})</h2>
+{% if parsed.urls %}
+<ul class="list-group mb-4">
+    {% for link in parsed.urls %}
+    <li class="list-group-item">
+        <code>{{ link.url }}</code>
+        {% if link.display_text %}<br><small class="text-muted">displayed as: {{ link.display_text }}</small>{% endif %}
+        {% if link.is_obfuscated %}<span class="badge text-bg-danger ms-2">possibly obfuscated</span>{% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">No URLs found.</p>
+{% endif %}
+
+<h2 class="h4">Attachments ({{ parsed.attachments|length }})</h2>
+{% if parsed.attachments %}
+<table class="table table-sm table-bordered">
+    <thead><tr><th>Filename</th><th>Content-Type</th><th>Size (bytes)</th><th>SHA-256</th></tr></thead>
+    <tbody>
+        {% for att in parsed.attachments %}
+        <tr>
+            <td>{{ att.filename or "(unnamed)" }}</td>
+            <td>{{ att.content_type }}</td>
+            <td>{{ att.size_bytes }}</td>
+            <td><code>{{ att.sha256 }}</code></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<p class="text-muted small">
+    Attachment contents are never opened or executed - only metadata is shown.
+</p>
+{% else %}
+<p class="text-muted">No attachments found.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

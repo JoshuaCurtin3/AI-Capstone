@@ -160,27 +160,51 @@ include exception details, gated on `Settings.debug` at request time.
 
 ## Phase 3 – Email Parser
 
-- [ ] Raw email parser
-- [ ] .eml uploads
-- [ ] Header extraction
-- [ ] URL extraction
-- [ ] Attachment metadata
-- [ ] Safe parsing
-- [ ] Unit tests
+- [x] Raw email parser
+- [x] .eml uploads
+- [x] Header extraction
+- [x] URL extraction
+- [x] Attachment metadata
+- [x] Safe parsing
+- [x] Unit tests
 
-**Goal:** Safely and reliably turn an uploaded `.eml` file into structured, validated data
-(headers, body, URLs, attachment metadata) — without ever executing or opening attachment
-payload content.
+**Goal:** Safely and reliably turn a pasted raw email or an uploaded `.eml` file into
+structured, validated data (headers, body, URLs, attachment metadata) — without ever
+executing or opening attachment payload content, and without ever fetching an extracted
+URL.
 
 **Files created:**
-- `app/email_parser/parser.py`
+- `app/email_parser/parser.py` — `parse_email()`; stdlib `email` package + `html.parser`
+  only, no new dependencies
 - `app/email_parser/schemas.py` — `ParsedEmail`, `ParsedURL`, `AttachmentMeta` (Pydantic)
-- `app/api/v1/upload.py` — upload endpoint
-- `app/templates/upload.html`
+- `app/email_parser/exceptions.py` — `EmailParsingError(AppError)`
+- `app/api/v1/upload.py` — `/upload` GET (form) + POST (paste or `.eml` file) endpoint;
+  enforces a configured max size and an allowed content-type set
+- `app/templates/upload.html` — paste-or-upload form + rendered results (headers,
+  Authentication-Results, Received headers, bodies, URLs with an obfuscation badge,
+  attachment metadata table)
+- `app/core/templates.py` — shared `Jinja2Templates` instance (extracted from
+  `app/main.py` so `app/api/v1/upload.py` renders through the same environment/globals
+  instead of standing up a second one)
+- `app/config.py` — added `Settings.max_email_upload_bytes` (`APP_MAX_EMAIL_UPLOAD_BYTES`)
 - `tests/unit/test_email_parser_headers.py`
 - `tests/unit/test_email_parser_urls.py`
 - `tests/unit/test_email_parser_attachments.py`
-- `tests/fixtures/*.eml` — sample phishing and legitimate emails, plus malformed ones
+- `tests/unit/test_email_parser_safety.py` — asserts no network connection is ever
+  opened while parsing (monkeypatched `socket`), `AttachmentMeta` structurally has no
+  raw-content field, and non-email binary garbage doesn't raise
+- `tests/unit/test_upload_endpoint.py` — paste + upload happy paths, extension/
+  content-type/size rejection
+- `tests/fixtures/legitimate.eml`, `phishing.eml` (obfuscated link, spoofed Reply-To/
+  Return-Path, multiple Received headers), `malformed.eml` (declared multipart boundary
+  that never appears)
+
+**Bug fixed in passing:** `app/templates/base.html`'s footer referenced the
+`current_year` Jinja global as `{{ current_year }}` instead of `{{ current_year() }}` —
+Jinja doesn't auto-invoke a bare callable, so the footer was rendering the lambda's
+`repr()` instead of the year. Pre-existing since Phase 2; caught by live-testing `/`
+during this phase's verification, not by the Phase 2 test suite (which only asserted
+footer markup presence, not its rendered value).
 
 **Dependencies:** Phase 2 (FastAPI app + test harness).
 
@@ -188,20 +212,37 @@ payload content.
 oversized/zip-bomb attachments, path-traversal in filenames) is the hard part, not the
 happy path.
 
-**Tests that must pass:**
-- Well-formed `.eml` parses correctly (headers, body, URLs, attachment list).
-- Malformed/corrupt `.eml` is rejected/handled without crashing the process.
+**Tests that must pass — VERIFIED PASSING (32/32, full suite):**
+- Well-formed `.eml` parses correctly (headers, body, URLs, attachment list). ✅
+- Malformed/corrupt `.eml` is rejected/handled without crashing the process. ✅ (a
+  declared-but-absent multipart boundary degrades gracefully; empty input and random
+  binary garbage also verified not to raise)
 - URLs are extracted from both plain-text and HTML bodies, including obfuscated links
-  (e.g. display text ≠ href target).
+  (e.g. display text ≠ href target). ✅
 - Attachment metadata (filename, size, content-type, hash) is extracted without reading
-  attachment *content* into memory unbounded.
+  attachment *content* into memory unbounded. ✅ (raw input size is capped up front via
+  `max_bytes`/`Settings.max_email_upload_bytes`, bounding all downstream decoding)
 - Upload endpoint rejects files over a configured max size and outside an allowed
-  content-type set.
+  content-type set. ✅
 
-**Completion criteria:** All unit tests pass; parser never executes or opens attachment
-payloads; upload endpoint enforces size/type limits.
+**Completion criteria — VERIFIED:**
+- All unit tests pass (32/32). ✅
+- Parser never executes or opens attachment payloads — only hashes/sizes bytes already
+  decoded in memory by the stdlib `email` package; `AttachmentMeta` has no field that
+  could carry raw content (asserted structurally in `test_email_parser_safety.py`). ✅
+- Parser never fetches/visits an extracted URL — verified by monkeypatching
+  `socket.socket.connect`/`socket.create_connection` to raise if called, then parsing
+  the phishing fixture (full of attacker URLs) and confirming no call occurs. ✅
+- Upload endpoint enforces size/type limits — verified against a live `uvicorn` server,
+  not just `TestClient`. ✅
+- `ruff check .`, `black --check .`, `mypy app`, `pytest` all pass clean. ✅ (added a
+  `ruff` `flake8-bugbear` `extend-immutable-calls` allowlist for
+  `Depends`/`File`/`Form`/etc. — FastAPI's DI idiom uses call-expressions as parameter
+  defaults, which bugbear's B008 otherwise flags as a mutable-default footgun)
 
-**Git commit message suggestion:** `feat: add safe .eml parsing with header, URL, and attachment metadata extraction`
+**Git commit message suggestion:** `feat: add safe raw-email/.eml parsing with header, URL, and attachment metadata extraction`
+
+**Status: COMPLETE.**
 
 ---
 
@@ -521,7 +562,7 @@ silently added — decide whether to fold them into an existing phase:
 
 - [x] Phase 1 – Planning
 - [x] Phase 2 – Application Foundation
-- [ ] Phase 3 – Email Parser
+- [x] Phase 3 – Email Parser
 - [ ] Phase 4 – Phishing Detection
 - [ ] Phase 5 – Database
 - [ ] Phase 6 – Active Directory
@@ -532,28 +573,31 @@ silently added — decide whether to fold them into an existing phase:
 
 ### Current milestone
 
-**Phase 2 – Application Foundation — complete.** The Django scaffold has been fully
-replaced with a production-shaped FastAPI app: a full Bootstrap UI shell (navbar,
-footer, home page), centralized error handling (custom 404/500 pages that never leak
-exception internals outside debug mode), environment-driven configuration with a
-dev/production toggle, structured logging, a `/health` endpoint, and a pytest suite
-(7 tests) all passing alongside clean ruff/black/mypy runs. `.github/workflows/ci.yml`
-has also been rewritten to a basic FastAPI-appropriate test workflow (no Postgres, no
-Django env vars) — verified locally to match what CI will run; not yet observed green
-in an actual GitHub Actions run (confirmed once this branch's push triggers it).
+**Phase 3 – Email Parser — complete.** Both submission paths (paste a raw email, upload
+an `.eml` file) parse into structured data via a stdlib-only `email`/`html.parser`
+parser: Subject/From/To/Date/Reply-To/Return-Path/Message-ID, every
+Authentication-Results and Received header, plain-text and HTML bodies, extracted URLs
+(flagging obfuscated display-text-vs-href mismatches), and attachment metadata
+(filename, content-type, size, SHA-256) — never the raw attachment content. The parser
+never executes an attachment and never fetches an extracted URL, both verified by
+tests (the latter via a monkeypatched `socket` that raises if any connection is
+attempted). 32/32 tests pass; `ruff`/`black`/`mypy` all clean; the live app was
+started with real `uvicorn` and both submission paths, plus its rejection rules
+(bad extension, disallowed content-type, oversized payload), were exercised against
+it directly.
 
 ### Next milestone
 
-**Phase 3 – Email Parser** (not started — explicitly out of scope for this round of
-work).
+**Phase 4 – Phishing Detection** (not started — explicitly out of scope for this round
+of work).
 
 ### Remaining work
 
-Phases 3 through 10 in full. Notably still stale/untouched (intentionally, per phase
+Phases 4 through 10 in full. Notably still stale/untouched (intentionally, per phase
 scoping): `Dockerfile`, `docker-compose.yml`, `docker/gunicorn/gunicorn.conf.py` (still
 reference the removed `app.config.wsgi` — corrected in Phase 8), and
 `.github/workflows/deploy.yml` (still reference `manage.py`-era assumptions —
-corrected in Phase 9). `ci.yml` itself is now current as of this phase.
+corrected in Phase 9).
 
 ### Known risks
 

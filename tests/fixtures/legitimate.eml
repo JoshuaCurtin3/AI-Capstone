@@ -1,0 +1,40 @@
+From: Alice Example <alice@example.com>
+To: Bob Example <bob@example.com>
+Subject: Quarterly report attached
+Date: Mon, 21 Jul 2025 10:15:00 -0400
+Message-ID: <abc123@example.com>
+Reply-To: alice@example.com
+Return-Path: <alice@example.com>
+Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=example.com; dkim=pass header.d=example.com
+Received: from mail.example.com (mail.example.com [203.0.113.10]) by mx.example.com with ESMTP id 1; Mon, 21 Jul 2025 10:14:58 -0400
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="OUTER"
+
+--OUTER
+Content-Type: multipart/alternative; boundary="INNER"
+
+--INNER
+Content-Type: text/plain; charset="utf-8"
+
+Hi Bob,
+
+Please see the attached quarterly report. You can also review it online at https://example.com/reports/q2.
+
+Thanks,
+Alice
+
+--INNER
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Hi Bob,</p><p>Please see the attached quarterly report. You can also review it online at <a href="https://example.com/reports/q2">our reports page</a>.</p><p>Thanks,<br>Alice</p></body></html>
+
+--INNER--
+
+--OUTER
+Content-Type: application/pdf; name="quarterly_report.pdf"
+Content-Disposition: attachment; filename="quarterly_report.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PC9UeXBlL0NhdGFsb2c+PgplbmRvYmoK
+
+--OUTER--

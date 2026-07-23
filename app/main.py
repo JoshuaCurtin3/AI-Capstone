@@ -8,18 +8,18 @@ belong in their owning module.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.health import router as health_router
+from app.api.v1.upload import router as upload_router
 from app.config import get_settings
 from app.core.logging import configure_logging
+from app.core.templates import templates
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -43,11 +43,8 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
-templates.env.globals["app_name"] = settings.app_name
-templates.env.globals["current_year"] = lambda: datetime.now(UTC).year
-
 app.include_router(health_router)
+app.include_router(upload_router)
 
 
 @app.get("/")

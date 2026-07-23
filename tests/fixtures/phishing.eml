@@ -1,0 +1,26 @@
+From: "Secure Bank Support" <support@secure-bank.com>
+To: victim@example.com
+Subject: Urgent: Verify your account now
+Date: Tue, 22 Jul 2025 03:22:10 +0000
+Message-ID: <phish-001@evil-example.net>
+Reply-To: reply@evil-example.net
+Return-Path: <bounce@evil-example.net>
+Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=evil-example.net; dkim=fail
+Received: from unknown (unknown [198.51.100.7]) by mx.example.com with SMTP id 2; Tue, 22 Jul 2025 03:22:09 +0000
+Received: from relay.evil-example.net (relay.evil-example.net [198.51.100.99]) by unknown with SMTP id 3; Tue, 22 Jul 2025 03:22:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="OUTER2"
+
+--OUTER2
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Dear customer, your account has been suspended. Please verify immediately: <a href="http://phish.evil-example.net/login">https://secure-bank.com/login</a></p></body></html>
+
+--OUTER2
+Content-Type: application/octet-stream; name="invoice.pdf.exe"
+Content-Disposition: attachment; filename="invoice.pdf.exe"
+Content-Transfer-Encoding: base64
+
+VGhpcyBpcyBub3QgYSByZWFsIGV4ZWN1dGFibGUgLSB0ZXN0IGZpeHR1cmUgb25seS4=
+
+--OUTER2--

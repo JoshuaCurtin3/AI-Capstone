@@ -1,0 +1,95 @@
+"""Tests for the /upload endpoint (app.api.v1.upload).
+
+Covers both submission modes (pasted text, .eml upload) and the endpoint's
+own validation (extension, content-type allow-list, size cap) - independent
+of the parser-level tests in tests/unit/test_email_parser_*.py.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import Settings, get_settings
+from app.main import app
+
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
+
+
+def _load(name: str) -> bytes:
+    return (FIXTURES / name).read_bytes()
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_override() -> Iterator[None]:
+    yield
+    app.dependency_overrides.pop(get_settings, None)
+
+
+def test_get_upload_form_renders(client: TestClient) -> None:
+    response = client.get("/upload")
+
+    assert response.status_code == 200
+    assert "Analyze an email" in response.text
+
+
+def test_upload_pasted_raw_email_renders_parsed_result(client: TestClient) -> None:
+    raw_text = _load("legitimate.eml").decode("utf-8")
+
+    response = client.post("/upload", data={"raw_email_text": raw_text})
+
+    assert response.status_code == 200
+    assert "Quarterly report attached" in response.text
+    assert "quarterly_report.pdf" in response.text
+
+
+def test_upload_eml_file_renders_parsed_result(client: TestClient) -> None:
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.eml", _load("phishing.eml"), "message/rfc822")},
+    )
+
+    assert response.status_code == 200
+    assert "Urgent: Verify your account now" in response.text
+    assert "possibly obfuscated" in response.text
+
+
+def test_upload_rejects_non_eml_filename(client: TestClient) -> None:
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.exe", _load("phishing.eml"), "application/octet-stream")},
+    )
+
+    assert response.status_code == 200
+    assert "Only .eml files are accepted." in response.text
+
+
+def test_upload_rejects_disallowed_content_type(client: TestClient) -> None:
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.eml", _load("phishing.eml"), "application/zip")},
+    )
+
+    assert response.status_code == 200
+    assert "Unsupported upload content type" in response.text
+
+
+def test_upload_rejects_oversized_payload(client: TestClient) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        secret_key="test-secret-key", max_email_upload_bytes=10
+    )
+
+    response = client.post("/upload", data={"raw_email_text": "Subject: way too long for the cap"})
+
+    assert response.status_code == 200
+    assert "exceeds the maximum allowed size" in response.text
+
+
+def test_upload_with_nothing_submitted_shows_error(client: TestClient) -> None:
+    response = client.post("/upload", data={"raw_email_text": ""})
+
+    assert response.status_code == 200
+    assert "Paste a raw email or choose an .eml file to upload." in response.text

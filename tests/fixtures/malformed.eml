@@ -1,0 +1,9 @@
+From: broken@example.com
+To: victim@example.com
+Subject: Broken message
+Date: not-a-real-date
+Content-Type: multipart/mixed; boundary="MISSING"
+
+This body declares a multipart boundary that never actually appears below,
+so it cannot be split into parts - parsing must degrade gracefully instead
+of crashing.
