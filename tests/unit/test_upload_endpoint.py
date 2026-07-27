@@ -57,6 +57,32 @@ def test_upload_eml_file_renders_parsed_result(client: TestClient) -> None:
     assert "possibly obfuscated" in response.text
 
 
+def test_upload_renders_risk_score_and_findings_for_phishing_fixture(client: TestClient) -> None:
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.eml", _load("phishing.eml"), "message/rfc822")},
+    )
+
+    assert response.status_code == 200
+    assert "Risk Score:" in response.text
+    assert "CRITICAL" in response.text or "HIGH" in response.text
+    assert "SPF failed" in response.text
+    assert "Total Findings" in response.text
+    assert "Total Risk Score" in response.text
+    assert "Risk Classification" in response.text
+
+
+def test_upload_renders_zero_score_for_legitimate_fixture(client: TestClient) -> None:
+    response = client.post(
+        "/upload",
+        files={"file": ("legitimate.eml", _load("legitimate.eml"), "message/rfc822")},
+    )
+
+    assert response.status_code == 200
+    assert "Risk Score: 0 / 100" in response.text
+    assert "LOW" in response.text
+
+
 def test_upload_rejects_non_eml_filename(client: TestClient) -> None:
     response = client.post(
         "/upload",

@@ -17,6 +17,8 @@ from app.core.templates import templates
 from app.email_parser.exceptions import EmailParsingError
 from app.email_parser.parser import parse_email
 from app.email_parser.schemas import ParsedEmail
+from app.phishing_detection.schemas import ScoringResult
+from app.phishing_detection.scoring_engine import calculate_risk_score
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -65,11 +67,18 @@ async def upload_submit(
         error = "Paste a raw email or choose an .eml file to upload."
 
     parsed: ParsedEmail | None = None
+    scoring: ScoringResult | None = None
     if raw_bytes is not None and error is None:
         try:
             parsed = parse_email(raw_bytes, max_bytes=settings.max_email_upload_bytes)
+            # Scoring runs immediately after parsing and before any AI
+            # involvement - the risk score is deterministic output of
+            # phishing_detection alone (see CLAUDE.md's core rule).
+            scoring = calculate_risk_score(parsed)
         except EmailParsingError as exc:
             logger.warning("Failed to parse submitted email: %s", exc)
             error = str(exc)
 
-    return templates.TemplateResponse(request, "upload.html", {"parsed": parsed, "error": error})
+    return templates.TemplateResponse(
+        request, "upload.html", {"parsed": parsed, "scoring": scoring, "error": error}
+    )

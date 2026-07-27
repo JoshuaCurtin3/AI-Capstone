@@ -38,8 +38,15 @@ def test_parsing_never_opens_a_network_connection(monkeypatch: pytest.MonkeyPatc
 def test_attachment_metadata_model_never_carries_raw_content() -> None:
     """Structural guarantee: AttachmentMeta has no field that could hold an
     attachment's raw bytes, so it's impossible to accidentally serialize or
-    act on payload content downstream."""
-    assert set(AttachmentMeta.model_fields) == {"filename", "content_type", "size_bytes", "sha256"}
+    act on payload content downstream. `is_password_protected` (Phase 4) is
+    a derived bool/None flag, not content, so it's included here too."""
+    assert set(AttachmentMeta.model_fields) == {
+        "filename",
+        "content_type",
+        "size_bytes",
+        "sha256",
+        "is_password_protected",
+    }
 
 
 def test_non_email_binary_garbage_does_not_raise() -> None:

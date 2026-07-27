@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
+import struct
+import zipfile
+from email.message import EmailMessage
 from pathlib import Path
 
 import pytest
@@ -81,6 +85,75 @@ def test_no_attachments_returns_empty_list() -> None:
     parsed = parse_email(raw)
 
     assert parsed.attachments == []
+
+
+def _build_email_with_attachment(
+    filename: str, maintype: str, subtype: str, payload: bytes
+) -> bytes:
+    message = EmailMessage()
+    message["From"] = "sender@example.com"
+    message["Subject"] = "Attachment test"
+    message.set_content("body")
+    message.add_attachment(payload, maintype=maintype, subtype=subtype, filename=filename)
+    return message.as_bytes()
+
+
+def _flag_zip_as_encrypted(data: bytes) -> bytes:
+    """Set the ZIP general-purpose encryption bit (bit 0) on every local
+    file header and central directory record in `data`.
+
+    zipfile.ZipFile's own write path always recomputes flag_bits from
+    scratch (it ignores whatever ZipInfo.flag_bits was set to beforehand),
+    so the stdlib can't create a "flagged" fixture directly - this patches
+    the already-written bytes instead, purely to exercise
+    _detect_zip_password_protection's read path in a test.
+    """
+    buffer = bytearray(data)
+    for signature, flag_offset in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        index = buffer.find(signature)
+        while index != -1:
+            offset = index + flag_offset
+            current_flags = struct.unpack_from("<H", buffer, offset)[0]
+            struct.pack_into("<H", buffer, offset, current_flags | 0x1)
+            index = buffer.find(signature, index + 4)
+    return bytes(buffer)
+
+
+def test_password_protected_zip_attachment_is_detected() -> None:
+    """Phase 4 attachment rule needs this signal - detected here (not
+    re-implemented in phishing_detection) since only the parser ever sees
+    the decoded attachment bytes; see AttachmentMeta.is_password_protected.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("secret.txt", b"placeholder - not real encrypted bytes")
+    encrypted_zip_bytes = _flag_zip_as_encrypted(buffer.getvalue())
+    raw = _build_email_with_attachment("secret.zip", "application", "zip", encrypted_zip_bytes)
+
+    parsed = parse_email(raw)
+
+    assert len(parsed.attachments) == 1
+    assert parsed.attachments[0].is_password_protected is True
+
+
+def test_non_protected_zip_attachment_is_detected_as_such() -> None:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("hello.txt", b"hello world")
+    raw = _build_email_with_attachment("bundle.zip", "application", "zip", buffer.getvalue())
+
+    parsed = parse_email(raw)
+
+    assert len(parsed.attachments) == 1
+    assert parsed.attachments[0].is_password_protected is False
+
+
+def test_non_zip_attachment_reports_undetectable_password_protection() -> None:
+    """Edge case: protection can't be determined for non-ZIP formats (e.g. a
+    PDF), so it must report None rather than guessing either way."""
+    parsed = parse_email(_load("legitimate.eml"))
+
+    assert parsed.attachments[0].is_password_protected is None
 
 
 def test_email_exceeding_max_bytes_is_rejected_before_parsing() -> None:

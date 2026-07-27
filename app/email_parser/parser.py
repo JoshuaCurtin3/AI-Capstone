@@ -17,8 +17,10 @@ Safety guarantees (CLAUDE.md / TASKS.md Phase 3 "safe parsing"):
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import re
+import zipfile
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -41,6 +43,8 @@ _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 #: than part of the URL itself (e.g. "...at https://example.com/x.").
 _TRAILING_PUNCTUATION = ".,;:!?)'\""
 _DOMAIN_LIKE_RE = re.compile(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b", re.IGNORECASE)
+
+_ZIP_CONTENT_TYPES = {"application/zip", "application/x-zip-compressed"}
 
 
 def parse_email(raw_email: bytes, *, max_bytes: int = DEFAULT_MAX_BYTES) -> ParsedEmail:
@@ -120,6 +124,22 @@ def _get_body(message: EmailMessage, subtype: str) -> str | None:
     return content if isinstance(content, str) else None
 
 
+def _detect_zip_password_protection(payload: bytes) -> bool | None:
+    """True/False if the ZIP's own local file headers flag encryption.
+
+    Reads only the ZIP central directory metadata (same trust level as the
+    sha256 hash already computed) - never extracts/opens a member's content,
+    so this stays consistent with the "never execute attachment payloads"
+    safety guarantee above. Returns None when the bytes aren't a readable
+    ZIP at all, since protection can't be determined in that case.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            return any(info.flag_bits & 0x1 for info in archive.infolist())
+    except (zipfile.BadZipFile, OSError):
+        return None
+
+
 def _extract_attachments(message: EmailMessage) -> list[AttachmentMeta]:
     """Return metadata for each attachment part - never its raw content."""
     attachments: list[AttachmentMeta] = []
@@ -137,12 +157,19 @@ def _extract_attachments(message: EmailMessage) -> list[AttachmentMeta]:
             sanitized_filename = Path(filename).name if filename else None
             payload = part.get_payload(decode=True)
             payload_bytes = payload if isinstance(payload, bytes) else b""
+            content_type = part.get_content_type()
+            looks_like_zip = content_type in _ZIP_CONTENT_TYPES or (
+                sanitized_filename is not None and sanitized_filename.lower().endswith(".zip")
+            )
             attachments.append(
                 AttachmentMeta(
                     filename=sanitized_filename,
-                    content_type=part.get_content_type(),
+                    content_type=content_type,
                     size_bytes=len(payload_bytes),
                     sha256=hashlib.sha256(payload_bytes).hexdigest(),
+                    is_password_protected=(
+                        _detect_zip_password_protection(payload_bytes) if looks_like_zip else None
+                    ),
                 )
             )
         except Exception as exc:

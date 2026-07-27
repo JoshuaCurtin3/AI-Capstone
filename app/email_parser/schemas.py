@@ -36,6 +36,11 @@ class AttachmentMeta(BaseModel):
     content_type: str
     size_bytes: int
     sha256: str
+    #: True/False when the attachment is a ZIP whose local file headers carry
+    #: the encryption flag; None when the format isn't a ZIP or couldn't be
+    #: read as one, since encryption can't be determined without opening it
+    #: (Phase 4 attachment rule "password-protected archive (if detectable)").
+    is_password_protected: bool | None = None
 
 
 class ParsedEmail(BaseModel):

@@ -27,6 +27,47 @@
 {% endif %}
 
 {% if parsed %}
+{% if scoring %}
+{% set badge_class = {"Low": "success", "Medium": "warning", "High": "danger", "Critical": "dark"}[scoring.classification] %}
+<div class="card mb-4 border-{{ badge_class }}">
+    <div class="card-body">
+        <h2 class="h3">Risk Score: {{ scoring.score }} / 100</h2>
+        <p class="mb-0">
+            Classification:
+            <span class="badge text-bg-{{ badge_class }}">{{ scoring.classification|upper }}</span>
+        </p>
+    </div>
+</div>
+
+<h2 class="h4">Findings ({{ scoring.total_findings }})</h2>
+{% if scoring.findings %}
+<ul class="list-group mb-4">
+    {% for finding in scoring.findings %}
+    <li class="list-group-item">
+        <div class="fw-semibold">&check; {{ finding.name }} (+{{ finding.points }})</div>
+        <div class="small text-muted">Evidence: {{ finding.evidence }}</div>
+        <div>Reason: {{ finding.explanation }}</div>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-muted">No findings - nothing suspicious detected by the scoring rules.</p>
+{% endif %}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <dl class="row mb-0">
+            <dt class="col-sm-4">Total Findings</dt>
+            <dd class="col-sm-8">{{ scoring.total_findings }}</dd>
+            <dt class="col-sm-4">Total Risk Score</dt>
+            <dd class="col-sm-8">{{ scoring.score }} / 100</dd>
+            <dt class="col-sm-4">Risk Classification</dt>
+            <dd class="col-sm-8">{{ scoring.classification|upper }}</dd>
+        </dl>
+    </div>
+</div>
+{% endif %}
+
 <h2 class="h4">Headers</h2>
 <table class="table table-sm table-bordered">
     <tbody>

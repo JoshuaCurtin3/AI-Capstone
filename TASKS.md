@@ -248,14 +248,14 @@ happy path.
 
 ## Phase 4 – Phishing Detection
 
-- [ ] SPF checks
-- [ ] DKIM checks
-- [ ] DMARC checks
-- [ ] URL analysis
-- [ ] Attachment analysis
-- [ ] Risk scoring
-- [ ] Deterministic explanation data *(see note below — renamed from "Explanation generation")*
-- [ ] Unit tests
+- [x] SPF checks
+- [x] DKIM checks
+- [x] DMARC checks
+- [x] URL analysis
+- [x] Attachment analysis
+- [x] Risk scoring
+- [x] Deterministic explanation data *(see note below — renamed from "Explanation generation")*
+- [x] Unit tests
 
 > **Consistency fix vs. the original phase list:** the original brief called this
 > sub-task "Explanation generation." Per CLAUDE.md, human-readable explanations are
@@ -268,34 +268,90 @@ validation, URL heuristics, attachment heuristics — combined into a single rep
 risk score plus a structured list of triggered rules.
 
 **Files created:**
-- `app/phishing_detection/rules/spf.py`
-- `app/phishing_detection/rules/dkim.py`
-- `app/phishing_detection/rules/dmarc.py`
-- `app/phishing_detection/rules/url_analysis.py`
-- `app/phishing_detection/rules/attachment_analysis.py`
-- `app/phishing_detection/scoring_engine.py`
-- `app/phishing_detection/schemas.py` — `ScoringResult` (score, triggered rule list)
+- `app/phishing_detection/rules/_auth_results.py` — private helper shared by
+  spf.py/dkim.py/dmarc.py: parses the mechanism verdict (`spf=`/`dkim=`/`dmarc=`) out of
+  the first `Authentication-Results` header
+- `app/phishing_detection/rules/spf.py`, `dkim.py`, `dmarc.py` — SPF/DKIM/DMARC-fail
+  rules plus `dmarc.py::check_missing_authentication_results` for the missing-header case
+- `app/phishing_detection/rules/header_analysis.py` — Reply-To/Return-Path mismatch,
+  suspicious display name, excessive Received headers
+- `app/phishing_detection/rules/url_analysis.py` — IP-literal hosts, punycode,
+  shorteners, suspicious TLDs, insecure HTTP, display-text/destination mismatch
+- `app/phishing_detection/rules/attachment_analysis.py` — executable/double extensions,
+  macro-enabled Office files, password-protected/general archives
+- `app/phishing_detection/rules/content_analysis.py` — urgency language, credential
+  harvesting, payment/invoice scams, password-reset scams, brand impersonation
+- `app/phishing_detection/scoring_engine.py` — `calculate_risk_score`, combines every
+  rule's findings, clamps to 0-100, classifies Low/Medium/High/Critical
+- `app/phishing_detection/schemas.py` — `Finding` (rule_id, category, name, points,
+  evidence, explanation) and `ScoringResult` (score, classification, findings,
+  total_findings)
+- `app/email_parser/schemas.py`, `app/email_parser/parser.py` — added
+  `AttachmentMeta.is_password_protected` (`bool | None`), detected at parse time by
+  reading a ZIP's own local-file-header encryption bit (metadata only, never opening a
+  member) — necessary infrastructure for the password-protected-archive rule, since
+  only the parser ever sees decoded attachment bytes
+- `app/api/v1/upload.py`, `app/templates/upload.html` — `/upload` now runs
+  `calculate_risk_score` right after parsing and renders the score, classification,
+  every finding (name/points/evidence/reason), and the Total Findings/Total Risk
+  Score/Risk Classification summary
 - `docs/scoring_rules.md` — one documented entry per rule (required by CLAUDE.md)
 - `tests/unit/test_rule_spf.py`, `test_rule_dkim.py`, `test_rule_dmarc.py`,
-  `test_rule_url_analysis.py`, `test_rule_attachment_analysis.py`,
+  `test_rule_header_analysis.py`, `test_rule_url_analysis.py`,
+  `test_rule_attachment_analysis.py`, `test_rule_content_analysis.py`,
   `test_scoring_engine.py`
+- `tests/unit/test_email_parser_attachments.py`, `test_email_parser_safety.py` —
+  extended with password-protection-detection tests and the updated
+  `AttachmentMeta.model_fields` structural assertion
+- `tests/unit/test_upload_endpoint.py` — extended to assert the risk score/findings
+  render for both the phishing and legitimate fixtures
 
-**Dependencies:** Phase 3 (needs `ParsedEmail`); `dnspython` (SPF/DMARC record lookups);
-a DKIM verification library (e.g. `dkimpy`).
+**Dependencies:** Phase 3 (needs `ParsedEmail`).
+
+> **Determinism decision:** per the "Known risks" note below (and TASKS.md's own
+> original callout), SPF/DKIM/DMARC are **not** re-verified live — no `dnspython`/
+> `dkimpy` were added. Instead, the rules parse the `Authentication-Results` header the
+> *receiving* mail server already computed. A live DNS/signature re-check would make the
+> score depend on network state and could change over time for a stored email, which
+> directly violates CLAUDE.md's "same input -> same score, every time" rule.
 
 **Estimated complexity:** High — SPF/DKIM/DMARC have many edge cases, and see the
 determinism risk noted below.
 
-**Tests that must pass:** Every rule has a true-positive test, a true-negative test, and
-at least one documented edge case (per CLAUDE.md). `scoring_engine` combines rule outputs
-deterministically for a fixed input. DNS-dependent rules are tested against a **mocked**
-resolver — never live DNS — so tests stay deterministic and offline.
+**Tests that must pass — VERIFIED PASSING (117/117, full suite):**
+- Every rule has a true-positive test, a true-negative test, and at least one documented
+  edge case (per CLAUDE.md) — see `docs/scoring_rules.md` for the rule-to-test mapping. ✅
+- `scoring_engine.calculate_risk_score` combines rule outputs deterministically for a
+  fixed input (`test_score_is_deterministic_for_identical_input`), sums points across
+  categories, and clamps to 0-100 (`test_score_is_capped_at_100`). ✅
+- Authentication rules are tested against mocked/hand-built `Authentication-Results`
+  header values — no live DNS or network I/O anywhere in the scoring path. ✅
+- Integration tests run the real parser + scoring engine against the existing
+  `legitimate.eml` (scores 0, Low, zero findings) and `phishing.eml` (SPF/DKIM fail,
+  Reply-To/Return-Path mismatch, obfuscated link, double-extension executable, urgency
+  language all trigger; High/Critical) fixtures. ✅
 
-**Completion criteria:** Every rule is documented in `docs/scoring_rules.md` with a
-matching test; `scoring_engine.calculate_risk_score` has zero AI/LLM imports; all tests
-pass with network I/O fully mocked.
+**Completion criteria — VERIFIED:**
+- Every rule is documented in `docs/scoring_rules.md` with a matching test. ✅
+- `scoring_engine.calculate_risk_score` has zero AI/LLM imports — grep confirms no
+  `app.ai_analysis`/`anthropic` reference anywhere under `app/phishing_detection/`. ✅
+- All 117 tests pass; network I/O fully mocked/absent (no DNS lookups anywhere in the
+  scoring path). ✅
+- `ruff check .`, `black --check .`, and `mypy app` all pass clean. ✅
+- Live-tested against a real `uvicorn` server: posting `phishing.eml` to `/upload`
+  renders `Risk Score: 100 / 100`, classification `CRITICAL`, and every expected finding
+  (SPF failed +15, DKIM failed +15, Reply-To mismatch +10, Return-Path mismatch +10,
+  Insecure HTTP link +5, Displayed link text does not match destination +15, Executable
+  attachment +20, Double file extension +15, Urgency language +5) with its evidence and
+  reason text, plus the Total Findings/Total Risk Score/Risk Classification summary. ✅
 
-**Git commit message suggestion:** `feat: implement deterministic SPF/DKIM/DMARC/URL/attachment scoring rules`
+**Explicitly out of scope for this phase (per CLAUDE.md/TASKS.md):** AI-generated
+explanation prose (Phase 7) and persisting scores to the database (Phase 5) — the
+`/upload` page renders the `ScoringResult` directly, nothing is stored yet.
+
+**Git commit message suggestion:** `feat: implement deterministic SPF/DKIM/DMARC/header/URL/attachment/content scoring rules`
+
+**Status: COMPLETE.**
 
 ---
 
@@ -563,7 +619,7 @@ silently added — decide whether to fold them into an existing phase:
 - [x] Phase 1 – Planning
 - [x] Phase 2 – Application Foundation
 - [x] Phase 3 – Email Parser
-- [ ] Phase 4 – Phishing Detection
+- [x] Phase 4 – Phishing Detection
 - [ ] Phase 5 – Database
 - [ ] Phase 6 – Active Directory
 - [ ] Phase 7 – AI Analysis
@@ -573,31 +629,33 @@ silently added — decide whether to fold them into an existing phase:
 
 ### Current milestone
 
-**Phase 3 – Email Parser — complete.** Both submission paths (paste a raw email, upload
-an `.eml` file) parse into structured data via a stdlib-only `email`/`html.parser`
-parser: Subject/From/To/Date/Reply-To/Return-Path/Message-ID, every
-Authentication-Results and Received header, plain-text and HTML bodies, extracted URLs
-(flagging obfuscated display-text-vs-href mismatches), and attachment metadata
-(filename, content-type, size, SHA-256) — never the raw attachment content. The parser
-never executes an attachment and never fetches an extracted URL, both verified by
-tests (the latter via a monkeypatched `socket` that raises if any connection is
-attempted). 32/32 tests pass; `ruff`/`black`/`mypy` all clean; the live app was
-started with real `uvicorn` and both submission paths, plus its rejection rules
-(bad extension, disallowed content-type, oversized payload), were exercised against
-it directly.
+**Phase 4 – Phishing Detection — complete.** `app/phishing_detection/scoring_engine.py`
+runs 20 deterministic rules (spanning authentication, header, URL, attachment, and
+content analysis) against a parsed email, sums their point contributions, and clamps
+the result to 0-100 with a Low/Medium/High/Critical classification — a pure function
+with zero network I/O, randomness, or AI/LLM involvement. SPF/DKIM/DMARC verdicts are
+read from the `Authentication-Results` header the receiving mail server already added,
+not re-verified live via DNS, to keep the score deterministic (see "Known risks" #2
+below). `/upload` now runs scoring immediately after parsing and renders the risk
+score, every triggered finding (name, points, evidence, reason), and a
+Total Findings/Total Risk Score/Risk Classification summary. 117/117 tests pass
+(every rule has a true-positive, true-negative, and edge-case test, plus scoring-engine
+integration tests against both `legitimate.eml` and `phishing.eml`); `ruff`/`black`/
+`mypy` all clean; the live app was started with real `uvicorn` and the phishing fixture
+was posted to `/upload` to confirm the rendered score (100/100, CRITICAL) and findings
+match the scoring engine's output.
 
 ### Next milestone
 
-**Phase 4 – Phishing Detection** (not started — explicitly out of scope for this round
-of work).
+**Phase 5 – Database** (not started — explicitly out of scope for this round of work).
 
 ### Remaining work
 
-Phases 4 through 10 in full. Notably still stale/untouched (intentionally, per phase
+Phases 5 through 10 in full. Notably still stale/untouched (intentionally, per phase
 scoping): `Dockerfile`, `docker-compose.yml`, `docker/gunicorn/gunicorn.conf.py` (still
 reference the removed `app.config.wsgi` — corrected in Phase 8), and
 `.github/workflows/deploy.yml` (still reference `manage.py`-era assumptions —
-corrected in Phase 9).
+corrected in Phase 9). `ScoringResult` is not yet persisted anywhere (Phase 5).
 
 ### Known risks
 
@@ -607,12 +665,11 @@ corrected in Phase 9).
    Remaining fallout is isolated to `Dockerfile`, `docker-compose.yml`, and
    `.github/workflows/deploy.yml`, which still assume the old stack — tracked as Phase
    8/9 work, not a blocker for Phase 3+.
-2. **SPF/DKIM/DMARC determinism tension.** Live re-verification requires DNS lookups,
-   which are network-dependent and can change over time — in tension with CLAUDE.md's
-   "no hidden state" determinism rule. **Recommendation for Phase 4:** parse the
-   `Authentication-Results`/`Received-SPF` headers the receiving mail server already
-   added, rather than re-querying DNS live. This keeps scoring deterministic and tests
-   offline-mockable.
+2. ~~**SPF/DKIM/DMARC determinism tension.**~~ **Resolved in Phase 4.** The rules parse
+   the `Authentication-Results` header the receiving mail server already added, rather
+   than re-querying DNS/re-verifying signatures live — no `dnspython`/`dkimpy`
+   dependency was introduced. Scoring stays deterministic and every authentication test
+   is fully offline.
 3. **No built-in CSRF in FastAPI.** Unlike Django, FastAPI ships no CSRF protection.
    Phase 6's login form (and any other session-authenticated POST route) needs an
    explicitly added mechanism or CLAUDE.md's "secure defaults" requirement is violated.

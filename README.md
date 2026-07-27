@@ -85,6 +85,28 @@ uvicorn app.main:app --reload
   to disk or executed; extracted URLs are never fetched/visited; malformed input is
   handled without crashing (see `tests/unit/test_email_parser_safety.py`).
 
+## Phishing risk scoring (Phase 4)
+
+- **Page**: `/upload` results now also show a deterministic risk score and its
+  triggered findings immediately below the parsed email.
+- **Scoring**: `app/phishing_detection/scoring_engine.py::calculate_risk_score` runs
+  every rule in `app/phishing_detection/rules/` against the parsed email, sums their
+  point contributions, and clamps the total to **0-100**: **0-24 Low, 25-49 Medium,
+  50-74 High, 75-100 Critical**. It is a pure function of the parsed email — no network
+  calls, no randomness, and no AI/LLM involvement (see CLAUDE.md's core rule).
+- **Rule categories**: authentication (SPF/DKIM/DMARC failure, missing
+  Authentication-Results header — read from the header the receiving mail server
+  already added, not re-verified live via DNS, to keep scoring deterministic), header
+  analysis (Reply-To/Return-Path mismatch, suspicious display name, excessive Received
+  headers), URL analysis (IP-literal hosts, punycode, shorteners, suspicious TLDs,
+  insecure HTTP, display-text/destination mismatch), attachment analysis (executable
+  and double extensions, macro-enabled Office files, password-protected/general
+  archives), and content analysis (urgency language, credential harvesting, payment/
+  invoice scams, password-reset scams, brand impersonation). Every rule is documented
+  in [docs/scoring_rules.md](docs/scoring_rules.md) with its point value and rationale.
+- **Not yet implemented**: AI-generated explanations of a finding are Phase 7's job —
+  each `Finding.explanation` here is a fixed, rule-authored sentence, not LLM output.
+
 ## Running tests
 
 ```bash
