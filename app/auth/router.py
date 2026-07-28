@@ -11,12 +11,16 @@ import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.auth import ldap_backend, session
 from app.auth.dependencies import get_current_user, require_user
 from app.auth.schemas import AuthenticatedUser
+from app.auth.services import get_or_create_user
 from app.core.security import verify_csrf_token
 from app.core.templates import templates
+from app.database.session import get_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,6 +62,7 @@ def login_submit(
     password: str = Form(...),
     csrf_token: str = Form(...),
     next: str = Form(default="/"),
+    db: Session = Depends(get_db),
 ) -> Response:
     """Validate CSRF, authenticate against AD, and start a session."""
     safe_next = _safe_next_path(next)
@@ -88,6 +93,17 @@ def login_submit(
             error="Your account is not authorized to use this application.",
             status_code=403,
         )
+
+    # Best-effort (Phase 5): cache a local User row for this AD identity so
+    # phishing_detection's AnalysisResult can reference who submitted an
+    # analysis. Never blocks login - AD via LDAPS is still the sole source
+    # of truth for identity/authorization even if this write fails.
+    try:
+        get_or_create_user(db, user)
+        db.commit()
+    except SQLAlchemyError:
+        logger.exception("Failed to cache local user record - continuing without it")
+        db.rollback()
 
     response = RedirectResponse(safe_next, status_code=303)
     session.create_session_cookie(response, user)

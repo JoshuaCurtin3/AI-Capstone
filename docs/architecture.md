@@ -48,16 +48,66 @@ text. See CLAUDE.md for why this boundary is non-negotiable.
 | A generic helper with no domain ownership        | `app/utils/` |
 | Nginx/Uvicorn/Gunicorn/deploy changes            | `docker/`, `.github/workflows/`, and this file |
 
-## Database and migrations (Phase 5+)
+## Database and migrations (Phase 5)
 
-- Models are SQLAlchemy declarative classes, living in each domain package's
-  own `models.py`, built on the shared base in `app/database/base.py`.
+- Models are SQLAlchemy 2.0 declarative classes (`Mapped`/`mapped_column`),
+  living in each domain package's own `models.py`, built on the shared
+  `Base` in `app/database/base.py`. `app/database/session.py` owns the
+  engine/`sessionmaker`/`get_db()` FastAPI dependency.
 - Schema changes are tracked as Alembic revisions under `alembic/versions/`,
   applied with `alembic upgrade head`. Every model change ships with its
   revision in the same PR — no implicit/auto-created schema drift.
-- `app/models/` holds only shared, reusable mixins (e.g. a timestamp mixin) —
-  never a concrete, queryable table. Concrete tables belong to the domain
-  package that owns them, so it's obvious what a migration is "for."
+  `alembic/env.py` reads the connection URL from `Settings.database_url`
+  (i.e. `APP_DATABASE_URL`) rather than `alembic.ini`, since `alembic.ini`
+  is committed and must never carry real credentials (CLAUDE.md's "no
+  secrets in source control" rule); it only falls back to that default when
+  a caller hasn't already set a URL, so
+  `tests/integration/test_alembic_migrations.py` can point migrations at a
+  separate `TEST_DATABASE_URL` via the Alembic Python API instead.
+- `app/models/` holds only shared, reusable mixins (currently
+  `TimeStampedMixin`: `created_at`/`updated_at`) — never a concrete,
+  queryable table. Concrete tables belong to the domain package that owns
+  them: `app/auth/models.py::User` and
+  `app/phishing_detection/models.py::AnalysisResult`/`TriggeredRule`.
+- **`User` never stores a credential.** Per CLAUDE.md's "no local password
+  auth" rule, Active Directory over LDAPS remains the sole source of truth
+  for identity/authorization on every login (see the Authentication section
+  above) — `User` is a local cache (username, display_name, email) upserted
+  by `app/auth/services.py::get_or_create_user` purely so
+  `AnalysisResult.submitted_by` can reference *who* ran an analysis and
+  `/dashboard` can filter by user.
+- **`AnalysisResult.submitted_by_id` is nullable.** `/upload` is
+  intentionally still public (Phase 6 decision), so an anonymous,
+  unauthenticated visitor can submit an email for analysis; it's still
+  recorded, just with no attributable user. `/dashboard` only shows the
+  logged-in user's own results, so anonymous analyses never appear there
+  (there's no identity to filter by).
+- **Persistence is best-effort, never blocking.** Both the `/upload` save
+  (`app/phishing_detection/services.py::save_analysis_result`) and the
+  login-time `User` upsert (`app/auth/services.py::get_or_create_user`) are
+  wrapped in try/except around `SQLAlchemyError` at their call sites
+  (`app/api/v1/upload.py`, `app/auth/router.py`): a database outage is
+  logged and swallowed, never turned into a 500 or a blocked login. This
+  keeps `/upload` and `/login` working exactly as they did before Phase 5
+  even if PostgreSQL is briefly unreachable — deliberate, since neither the
+  deterministic risk score nor AD authentication should ever depend on
+  database availability. `Settings.database_connect_timeout_seconds`
+  (default 3s) bounds how long a failed connection attempt can take, so an
+  unreachable database degrades to "briefly slower" rather than "hangs the
+  request" - **must be an `int`, not a `float`: psycopg2's `connect_timeout`
+  DSN parameter rejects a float value like `"3.0"` outright**, a real bug
+  caught only by live-testing against an actually-unreachable database, not
+  by the mocked/monkeypatched unit tests (which never touch the real
+  connect path at all).
+- **Integration tests require real PostgreSQL, never SQLite** (TASKS.md
+  Phase 5's explicit requirement, since SQLite's type/constraint/cascade
+  behavior differs meaningfully from Postgres). `tests/integration/test_database.py`,
+  `test_dashboard.py`, and `test_alembic_migrations.py` all read
+  `TEST_DATABASE_URL` and **skip themselves** (not fail) when it's unset or
+  unreachable, so `pytest` stays green in environments with no Postgres
+  available (this fully applies to the current CI workflow too, which has
+  no Postgres service container until Phase 9) while still providing real
+  coverage wherever a test database exists.
 
 ## Configuration and templates (Phase 2)
 

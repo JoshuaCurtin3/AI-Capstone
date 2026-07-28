@@ -5,6 +5,11 @@ jinja2>=3.1
 python-multipart>=0.0.9
 pydantic-settings>=2.4
 
+# --- PostgreSQL / SQLAlchemy / migrations (Phase 5) ---
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+alembic>=1.13
+
 # --- Active Directory / LDAPS + signed session cookies (Phase 6) ---
 ldap3>=2.9
 itsdangerous>=2.2
@@ -19,6 +24,5 @@ black>=24.0
 mypy>=1.10
 
 # --- Added in later phases, listed here for visibility only ---
-# psycopg2-binary, sqlalchemy, alembic         (Phase 5 — database)
 # anthropic                                    (Phase 7 — AI analysis)
 # gunicorn                                     (Phase 8 — deployment)

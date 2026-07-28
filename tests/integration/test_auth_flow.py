@@ -11,8 +11,10 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import ldap_backend
+from app.auth import router as auth_router_module
 from app.auth.schemas import AuthenticatedUser
 from app.main import app
 
@@ -251,3 +253,55 @@ def test_logout_without_valid_csrf_is_rejected(
     assert response.status_code == 403
     # Still logged in - logout must not have taken effect.
     assert client.get("/account").status_code == 200
+
+
+def test_login_calls_get_or_create_user(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 5: a successful login caches a local User row - verified here
+    without a real database by monkeypatching the upsert call itself (real
+    persistence is covered by tests/integration/test_database.py against
+    real PostgreSQL).
+    """
+    monkeypatch.setattr(ldap_backend, "authenticate", lambda u, p: AUTHORIZED_USER)
+    calls: list[AuthenticatedUser] = []
+
+    def fake_get_or_create_user(db: object, authenticated_user: AuthenticatedUser) -> None:
+        calls.append(authenticated_user)
+
+    monkeypatch.setattr(auth_router_module, "get_or_create_user", fake_get_or_create_user)
+    csrf_token = _csrf_token(client)
+
+    response = client.post(
+        "/login",
+        data={"username": "alice", "password": "correct", "csrf_token": csrf_token},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert calls == [AUTHORIZED_USER]
+
+
+def test_login_still_succeeds_when_user_cache_write_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database outage must not block login - AD via LDAPS remains the
+    sole source of truth for identity/authorization regardless of whether
+    the local User cache write succeeds; see app/auth/router.py.
+    """
+    monkeypatch.setattr(ldap_backend, "authenticate", lambda u, p: AUTHORIZED_USER)
+
+    def failing_upsert(*args: object, **kwargs: object) -> None:
+        raise SQLAlchemyError("simulated database outage")
+
+    monkeypatch.setattr(auth_router_module, "get_or_create_user", failing_upsert)
+    csrf_token = _csrf_token(client)
+
+    response = client.post(
+        "/login",
+        data={"username": "alice", "password": "correct", "csrf_token": csrf_token},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "session" in response.cookies

@@ -11,14 +11,20 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
+from app.auth.services import get_or_create_user
 from app.config import Settings, get_settings
 from app.core.templates import templates
+from app.database.session import get_db
 from app.email_parser.exceptions import EmailParsingError
 from app.email_parser.parser import parse_email
 from app.email_parser.schemas import ParsedEmail
 from app.phishing_detection.schemas import ScoringResult
 from app.phishing_detection.scoring_engine import calculate_risk_score
+from app.phishing_detection.services import save_analysis_result
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -27,6 +33,25 @@ logger = logging.getLogger(__name__)
 #: message/rfc822 isn't a registered browser MIME type - accept the common
 #: values rather than rejecting legitimate uploads on that alone.
 ALLOWED_UPLOAD_CONTENT_TYPES = {"", "message/rfc822", "application/octet-stream", "text/plain"}
+
+
+def _persist_analysis(
+    db: Session, request: Request, parsed: ParsedEmail, scoring: ScoringResult
+) -> None:
+    """Best-effort: record this analysis (Phase 5). /upload stays public
+    (Phase 6 decision) and must keep working even if the database is
+    unreachable - a persistence failure is logged and swallowed rather than
+    turning an otherwise-successful analysis into a 500, since the
+    deterministic score itself never depends on the database.
+    """
+    try:
+        current_user = get_current_user(request)
+        submitted_by = get_or_create_user(db, current_user) if current_user else None
+        save_analysis_result(db, parsed=parsed, scoring=scoring, submitted_by=submitted_by)
+        db.commit()
+    except SQLAlchemyError:
+        logger.exception("Failed to persist analysis result - continuing without saving")
+        db.rollback()
 
 
 @router.get("/upload", response_class=HTMLResponse)
@@ -41,6 +66,7 @@ async def upload_submit(
     raw_email_text: str = Form(default=""),
     file: UploadFile | None = File(default=None),
     settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Parse a pasted raw email or an uploaded .eml file and render it."""
     error: str | None = None
@@ -75,6 +101,7 @@ async def upload_submit(
             # involvement - the risk score is deterministic output of
             # phishing_detection alone (see CLAUDE.md's core rule).
             scoring = calculate_risk_score(parsed)
+            _persist_analysis(db, request, parsed, scoring)
         except EmailParsingError as exc:
             logger.warning("Failed to parse submitted email: %s", exc)
             error = str(exc)

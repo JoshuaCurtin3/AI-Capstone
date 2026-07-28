@@ -107,6 +107,40 @@ uvicorn app.main:app --reload
 - **Not yet implemented**: AI-generated explanations of a finding are Phase 7's job —
   each `Finding.explanation` here is a fixed, rule-authored sentence, not LLM output.
 
+## Database and analysis history (Phase 5)
+
+- **Page**: `/dashboard` (login-required) — shows the logged-in user's own analysis
+  history, newest first: date, subject, from address, score, classification, and
+  finding count.
+- **Persistence**: every `/upload` submission is saved as an `AnalysisResult` row (one
+  `TriggeredRule` row per finding) via `app/phishing_detection/services.py::save_analysis_result`,
+  right after `calculate_risk_score` runs — the score itself is computed exactly as in
+  Phase 4; this module only ever *stores* an already-computed result, never adjusts one.
+  `AnalysisResult.submitted_by_id` is nullable, since `/upload` is intentionally still
+  public (Phase 6 decision) and an anonymous visitor's analysis is still recorded, just
+  unattributed.
+- **User records**: `app/auth/models.py::User` is a local cache (username, display
+  name, email) upserted at login time — it **never stores a password or any AD
+  credential**; Active Directory over LDAPS remains the sole source of truth for
+  identity/authorization on every login (Phase 6 is untouched by this).
+- **Best-effort, never blocking**: both the `/upload` save and the login-time `User`
+  upsert are wrapped in try/except around database errors and simply logged on
+  failure — a PostgreSQL outage degrades to "this analysis wasn't saved," never a 500
+  or a blocked login. `APP_DATABASE_CONNECT_TIMEOUT_SECONDS` (default 3s) bounds how
+  long a failed connection attempt can take.
+- **Migrations**: SQLAlchemy 2.0 models + Alembic, `alembic upgrade head` /
+  `alembic downgrade base` (see `alembic/versions/0001_initial.py`). `alembic/env.py`
+  reads the connection string from `APP_DATABASE_URL`, never from the committed
+  `alembic.ini`, per CLAUDE.md's "no secrets in source control" rule.
+- **Config**: `APP_DATABASE_URL` (must be `postgresql://` or `postgresql+<driver>://`)
+  and `APP_DATABASE_CONNECT_TIMEOUT_SECONDS` in `.env.example`.
+- **Testing**: `tests/integration/test_database.py`, `test_dashboard.py`, and
+  `test_alembic_migrations.py` run against a **real** PostgreSQL database (never
+  SQLite, to match production) via `TEST_DATABASE_URL` — they skip themselves (not
+  fail) when it's unset or unreachable, so `pytest` stays green without a database
+  available. Point `TEST_DATABASE_URL` at a disposable database to exercise them for
+  real; see `docs/architecture.md`'s Database section for details.
+
 ## Active Directory authentication (Phase 6)
 
 - **Pages**: `/login` (GET renders the form, POST authenticates), `/logout`
@@ -142,6 +176,16 @@ uvicorn app.main:app --reload
 
 ```bash
 pytest
+```
+
+The Postgres-backed integration tests (`tests/integration/test_database.py`,
+`test_dashboard.py`, `test_alembic_migrations.py`) skip themselves automatically when
+`TEST_DATABASE_URL` is unset or unreachable. To exercise them for real, point it at a
+disposable database (never a real dev/prod one — the migration tests create and drop
+tables):
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg2://phishing_analyzer:change-me@localhost:5432/phishing_analyzer_test pytest
 ```
 
 ## Code quality

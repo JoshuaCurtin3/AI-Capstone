@@ -32,6 +32,20 @@ class Settings(BaseSettings):
     #: endpoint, bounding memory use during parsing (Phase 3 "safe parsing").
     max_email_upload_bytes: int = 10_000_000
 
+    # --- PostgreSQL / SQLAlchemy (Phase 5) ---
+    #: Full SQLAlchemy connection string, e.g.
+    #: "postgresql+psycopg2://user:pass@host:5432/dbname" — must start with
+    #: "postgresql" (enforced below); never sqlite, to match the production
+    #: database (see CLAUDE.md/TASKS.md Phase 5).
+    database_url: str
+    #: psycopg2 tries every resolved address (IPv6 then IPv4) with no
+    #: timeout by default, which can turn one unreachable database into a
+    #: multi-second stall per request - keep this short so a down/
+    #: unreachable database fails fast (persistence is best-effort; see
+    #: app/api/v1/upload.py, app/auth/router.py). Must be an int - psycopg2's
+    #: connect_timeout DSN parameter rejects a float (e.g. "3.0") outright.
+    database_connect_timeout_seconds: int = 3
+
     # --- Active Directory / LDAPS (Phase 6) ---
     #: e.g. "ldaps://ad.example.local:636" — must be ldaps://, never plain
     #: ldap://, per CLAUDE.md's "LDAPS only" requirement; enforced below.
@@ -59,6 +73,15 @@ class Settings(BaseSettings):
     def _require_ldaps_scheme(cls, value: str) -> str:
         if not value.lower().startswith("ldaps://"):
             raise ValueError("APP_LDAP_SERVER_URI must use the ldaps:// scheme (LDAPS only)")
+        return value
+
+    @field_validator("database_url")
+    @classmethod
+    def _require_postgresql_scheme(cls, value: str) -> str:
+        if not value.lower().startswith("postgresql"):
+            raise ValueError(
+                "APP_DATABASE_URL must be a postgresql:// (or postgresql+driver://) URL"
+            )
         return value
 
 

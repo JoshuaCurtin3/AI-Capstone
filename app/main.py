@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.health import router as health_router
+from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.upload import router as upload_router
 from app.auth.exceptions import AuthenticationRequiredError
 from app.auth.middleware import AuthContextMiddleware
@@ -56,6 +57,7 @@ app.add_middleware(AuthContextMiddleware)
 app.include_router(health_router)
 app.include_router(upload_router)
 app.include_router(auth_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/")

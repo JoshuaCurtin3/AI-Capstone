@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.v1 import upload as upload_module
 from app.config import Settings, get_settings
 from app.main import app
 
@@ -119,3 +121,55 @@ def test_upload_with_nothing_submitted_shows_error(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "Paste a raw email or choose an .eml file to upload." in response.text
+
+
+def test_upload_calls_save_analysis_result_with_the_computed_score(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 5: a successful parse+score is handed off for persistence -
+    verified here without a real database by monkeypatching the save call
+    itself (real persistence is covered by
+    tests/integration/test_database.py against real PostgreSQL).
+    """
+    calls: list[dict[str, object]] = []
+
+    def fake_save_analysis_result(
+        db: object, *, parsed: object, scoring: object, submitted_by: object
+    ) -> None:
+        calls.append({"parsed": parsed, "scoring": scoring, "submitted_by": submitted_by})
+
+    monkeypatch.setattr(upload_module, "save_analysis_result", fake_save_analysis_result)
+
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.eml", _load("phishing.eml"), "message/rfc822")},
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["parsed"].subject == "Urgent: Verify your account now"  # type: ignore[union-attr]
+    assert calls[0]["scoring"].score > 0  # type: ignore[union-attr]
+    assert calls[0]["submitted_by"] is None  # not logged in
+
+
+def test_upload_still_succeeds_when_persistence_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database outage must not turn a successful analysis into a 500 -
+    /upload stays public and functional (Phase 6 decision) regardless of
+    database availability; see app/api/v1/upload.py::_persist_analysis.
+    """
+
+    def failing_save(*args: object, **kwargs: object) -> None:
+        raise SQLAlchemyError("simulated database outage")
+
+    monkeypatch.setattr(upload_module, "save_analysis_result", failing_save)
+
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.eml", _load("phishing.eml"), "message/rfc822")},
+    )
+
+    assert response.status_code == 200
+    assert "Risk Score:" in response.text
+    assert "SPF failed" in response.text
