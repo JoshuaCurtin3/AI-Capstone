@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — My Account{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">My Account</h1>
+
+<table class="table table-sm table-bordered col-md-8">
+    <tbody>
+        <tr><th scope="row">Username</th><td>{{ current_user.username }}</td></tr>
+        <tr><th scope="row">Display name</th><td>{{ current_user.display_name }}</td></tr>
+        <tr><th scope="row">Email</th><td>{{ current_user.email or "—" }}</td></tr>
+        <tr>
+            <th scope="row">Groups</th>
+            <td>{{ current_user.groups|join(", ") if current_user.groups else "—" }}</td>
+        </tr>
+        <tr>
+            <th scope="row">Authorized</th>
+            <td>{{ "Yes" if current_user.is_in_required_group else "No" }}</td>
+        </tr>
+        <tr><th scope="row">Signed in at</th><td>{{ current_user.authenticated_at }}</td></tr>
+    </tbody>
+</table>
+{% endblock %}

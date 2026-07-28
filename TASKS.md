@@ -396,28 +396,64 @@ Postgres; no raw string-concatenated SQL anywhere (ORM/parameterized queries onl
 
 ## Phase 6 – Active Directory
 
-- [ ] LDAP/LDAPS authentication
-- [ ] Login page
-- [ ] Logout
-- [ ] Session management
-- [ ] Group authorization
-- [ ] Mock authentication tests
+- [x] LDAP/LDAPS authentication
+- [x] Login page
+- [x] Logout
+- [x] Session management
+- [x] Group authorization
+- [x] Mock authentication tests
 
 **Goal:** Authenticate users against Windows Server 2025 AD over LDAPS, maintain
 server-side sessions, and gate access by AD group membership — with zero local password
 storage.
 
+> **Scope decisions made during this phase** (see `docs/architecture.md`'s Phase 6
+> section for full rationale): `/upload` is left public — Phase 6 ships only the auth
+> machinery itself, demonstrated via a new `GET /account` protected page rather than
+> gating the existing analysis flow. Group authorization supports **nested** (not just
+> direct) group membership, resolved client-side via a depth-capped, cycle-safe BFS over
+> `memberOf`, because AD's server-side nested-group matching rule isn't implemented by
+> `ldap3`'s mocked test strategy and would have shipped untested.
+
 **Files created:**
-- `app/auth/ldap_backend.py` — `ldap3`-based LDAPS bind
-- `app/auth/router.py` — login/logout routes
-- `app/auth/dependencies.py` — `get_current_user` FastAPI dependency
-- `app/auth/session.py` — signed session cookie handling
-- `app/templates/login.html`
-- `app/core/security.py` — CSRF token helper for the login form (FastAPI has no built-in
-  CSRF protection, unlike Django — this must be added explicitly, per CLAUDE.md's secure
-  defaults requirement)
-- `tests/unit/test_ldap_backend.py` (mocked LDAP server)
-- `tests/integration/test_auth_flow.py`
+- `app/auth/schemas.py` — `AuthenticatedUser` (username, display_name, email, groups,
+  is_in_required_group, authenticated_at)
+- `app/auth/exceptions.py` — `AuthenticationRequiredError(AppError)`
+- `app/auth/ldap_backend.py` — `authenticate()`: service-account search -> bind-as-user
+  (the real credential check) -> client-side nested-group BFS; LDAP filter injection
+  blocked via `escape_filter_chars`; `ldaps://` enforced at both `Settings` validation
+  and in code (`use_ssl=True`)
+- `app/auth/session.py` — signed session cookie handling (`itsdangerous`)
+- `app/auth/dependencies.py` — `get_current_user`, `require_user` (raises
+  `AuthenticationRequiredError` when unauthenticated)
+- `app/auth/middleware.py` — `AuthContextMiddleware`: resolves `request.state.user` /
+  `request.state.csrf_token` on every request
+- `app/auth/router.py` — `GET/POST /login`, `POST /logout`, `GET /account` (protected
+  demo route)
+- `app/core/security.py` — CSRF double-submit-cookie helper for the login/logout forms
+  (FastAPI has no built-in CSRF protection, unlike Django — added explicitly per
+  CLAUDE.md's secure defaults requirement)
+- `app/templates/login.html`, `app/templates/account.html`
+- `tests/unit/test_ldap_backend.py` (mocked LDAP directory via `ldap3`'s `MOCK_SYNC`
+  strategy, shared across the service-bind and bind-as-user connections),
+  `test_session.py`, `test_csrf.py`
+- `tests/integration/test_auth_flow.py` (full login -> session -> protected route ->
+  logout flow through a real `TestClient`)
+
+**Files modified:**
+- `app/config.py` — `APP_LDAP_*` settings (`ldaps://`-only validator) +
+  `session_max_age_seconds`
+- `app/main.py` — registers `AuthContextMiddleware`, the auth router, and an
+  `AuthenticationRequiredError` -> `/login?next=` redirect handler
+- `app/templates/base.html` — navbar shows Login when logged out; display name + a
+  CSRF-protected Logout form + "My Account" link when logged in
+- `.env.example` — renamed placeholder `LDAP_*` vars to `APP_LDAP_*` for consistency
+  with the rest of `Settings`' single `env_prefix`; added `APP_LDAP_REQUIRED_GROUP_DN`;
+  dropped the unused `LDAP_GROUP_SEARCH_BASE_DN` (the BFS walks by DN directly)
+- `requirements.txt` — added `ldap3`, `itsdangerous`
+- `tests/conftest.py` — placeholder `APP_LDAP_*` env vars so `Settings()` construction
+  succeeds in every test without real secrets (mirrors the existing `APP_SECRET_KEY`
+  pattern)
 
 **Dependencies:** Phase 2 (app + templates); `ldap3`; an AD service account (env vars
 only, per CLAUDE.md).
@@ -425,17 +461,49 @@ only, per CLAUDE.md).
 **Estimated complexity:** High — LDAPS TLS trust, group-membership parsing, and session
 security are all easy to get subtly wrong.
 
-**Tests that must pass:** Mocked-LDAP tests for successful bind, invalid credentials, and
-group-membership parsing; session cookie is `HttpOnly` + `Secure` + `SameSite`;
-unauthenticated requests to protected routes redirect to login; users outside the
-required AD group get `403`. Per CLAUDE.md, tests mock LDAPS — never bind to real AD in
-CI.
+**Tests that must pass — VERIFIED PASSING (152/152, full suite):**
+- Mocked-LDAP tests for successful bind (direct AND nested group membership), invalid
+  credentials, unknown username, a user with no groups at all, LDAP filter-injection
+  attempts, service-account bind failure, and a cyclic group graph (must terminate, not
+  hang). ✅
+- Session cookie round-trips a user, rejects a tampered or expired cookie, and is
+  `HttpOnly` + `SameSite=Lax` always, `Secure` only when `APP_ENVIRONMENT=production`. ✅
+- CSRF: matching cookie+form token passes; missing/mismatched/missing-cookie all fail. ✅
+- Integration: login renders CSRF token + preserved `next`; a crafted absolute-URL
+  `next` falls back to `/` (open-redirect protection); successful login sets the session
+  cookie and redirects to the preserved `next`; wrong credentials -> generic 401; wrong
+  password wins over CSRF details are never revealed; correct credentials but outside
+  the required group -> distinct 403; missing/wrong CSRF token on login or logout -> 403;
+  unauthenticated `GET /account` redirects to `/login?next=/account`; authenticated
+  `GET /account` -> 200 with user info; logout clears the cookie (a follow-up protected
+  request bounces again) and itself requires a valid CSRF token. ✅
+- Per CLAUDE.md, every test mocks LDAP (`ldap3` `MOCK_SYNC`) — no live AD bind anywhere
+  in the suite. ✅
 
-**Completion criteria:** Login/logout work end-to-end against a mocked LDAP fixture; no
-AD password ever reaches application logs; LDAPS settings are env-var-only; group
-authorization enforced on protected routes.
+**Completion criteria — VERIFIED:**
+- Login/logout work end-to-end against a mocked LDAP fixture. ✅
+- No AD password ever reaches application logs — `authenticate()` never logs the
+  password, and the only credential-adjacent log lines are `logger.error`/`.warning`
+  calls that name the *reason* (bind failure, unauthorized), never a value. ✅
+- LDAPS settings are env-var-only (`APP_LDAP_*`, no defaults for secrets); `.env.example`
+  documents the shape only. ✅
+- `ldaps://` is enforced both by a `Settings` validator and by `use_ssl=True` in
+  `ldap_backend._build_server`. ✅
+- Group authorization enforced on `GET /account` via `Depends(require_user)`; nested
+  group membership verified working through a dedicated mocked test. ✅
+- `app/phishing_detection/` and `app/ai_analysis/` are completely untouched (`git diff
+  --stat` confirms zero changes) — auth stays fully independent of the deterministic
+  scoring engine, per CLAUDE.md's core rule. ✅
+- `ruff check .`, `black --check .`, `mypy app`, `pytest` all pass clean (152/152). ✅
+- Live-tested against a real `uvicorn` server: `/health`, `/upload` (still public,
+  unauthenticated), `GET /account` (redirects to `/login?next=/account` when logged
+  out), and `GET /login` (renders a CSRF token) all behave correctly; a login attempt
+  against a deliberately unreachable LDAPS endpoint fails as a clean generic 401 (the
+  `LDAPSocketOpenError` is caught and logged server-side, never a 500). ✅
 
 **Git commit message suggestion:** `feat: add LDAPS/Active Directory authentication with session-based login`
+
+**Status: COMPLETE.**
 
 ---
 
@@ -621,7 +689,7 @@ silently added — decide whether to fold them into an existing phase:
 - [x] Phase 3 – Email Parser
 - [x] Phase 4 – Phishing Detection
 - [ ] Phase 5 – Database
-- [ ] Phase 6 – Active Directory
+- [x] Phase 6 – Active Directory
 - [ ] Phase 7 – AI Analysis
 - [ ] Phase 8 – Ubuntu Deployment
 - [ ] Phase 9 – GitHub Automation
@@ -629,33 +697,44 @@ silently added — decide whether to fold them into an existing phase:
 
 ### Current milestone
 
-**Phase 4 – Phishing Detection — complete.** `app/phishing_detection/scoring_engine.py`
-runs 20 deterministic rules (spanning authentication, header, URL, attachment, and
-content analysis) against a parsed email, sums their point contributions, and clamps
-the result to 0-100 with a Low/Medium/High/Critical classification — a pure function
-with zero network I/O, randomness, or AI/LLM involvement. SPF/DKIM/DMARC verdicts are
-read from the `Authentication-Results` header the receiving mail server already added,
-not re-verified live via DNS, to keep the score deterministic (see "Known risks" #2
-below). `/upload` now runs scoring immediately after parsing and renders the risk
-score, every triggered finding (name, points, evidence, reason), and a
-Total Findings/Total Risk Score/Risk Classification summary. 117/117 tests pass
-(every rule has a true-positive, true-negative, and edge-case test, plus scoring-engine
-integration tests against both `legitimate.eml` and `phishing.eml`); `ruff`/`black`/
-`mypy` all clean; the live app was started with real `uvicorn` and the phishing fixture
-was posted to `/upload` to confirm the rendered score (100/100, CRITICAL) and findings
-match the scoring engine's output.
+**Phase 6 – Active Directory — complete.** Deliberately built ahead of Phase 5
+(database) — TASKS.md's own dependency graph lists Phase 6 as depending only on Phase 2
+(app + templates) plus `ldap3` and an AD service account, not on Phase 5, so this was a
+valid ordering. Users authenticate against Windows Server 2025 AD over LDAPS
+(`app/auth/ldap_backend.py`): a service account searches for the user, then a bind-as-
+that-user with the submitted password is the actual credential check — passwords are
+never compared locally or logged. Authorization requires membership (direct or nested)
+in `APP_LDAP_REQUIRED_GROUP_DN`, with nested membership resolved by a depth-capped,
+cycle-safe client-side walk over `memberOf` rather than AD's server-side matching-rule
+extension, specifically so it stays fully covered by `ldap3`'s mocked test strategy (see
+`docs/architecture.md`'s Phase 6 section). A signed, `HttpOnly`/`SameSite=Lax`/
+environment-gated-`Secure` session cookie (`app/auth/session.py`) and a CSRF
+double-submit cookie (`app/core/security.py`) protect `/login` and `/logout`; `require_user`
+redirects unauthenticated requests to `/login?next=<page>` and lands the user back where
+they were headed. `/upload` is intentionally left public in this phase — `GET /account`
+is the real, working demonstration of route protection. 152/152 tests pass (mocked-LDAP
+unit tests including direct/nested group membership, a cyclic-group case, and filter-
+injection; signed-cookie and CSRF unit tests; a full integration flow through a real
+`TestClient`); `ruff`/`black`/`mypy` all clean; live-tested against real `uvicorn`,
+including confirming an unreachable LDAPS endpoint fails as a clean 401, never a 500.
+`app/phishing_detection/` and `app/ai_analysis/` are completely untouched.
 
 ### Next milestone
 
-**Phase 5 – Database** (not started — explicitly out of scope for this round of work).
+**Phase 5 – Database** (not started) or **Phase 7 – AI Analysis** (not started) — either
+is unblocked; Phase 5 was explicitly deferred once already to build Phase 6 first.
 
 ### Remaining work
 
-Phases 5 through 10 in full. Notably still stale/untouched (intentionally, per phase
+Phases 5, 7 through 10 in full. Notably still stale/untouched (intentionally, per phase
 scoping): `Dockerfile`, `docker-compose.yml`, `docker/gunicorn/gunicorn.conf.py` (still
 reference the removed `app.config.wsgi` — corrected in Phase 8), and
 `.github/workflows/deploy.yml` (still reference `manage.py`-era assumptions —
-corrected in Phase 9). `ScoringResult` is not yet persisted anywhere (Phase 5).
+corrected in Phase 9). `ScoringResult` and `AuthenticatedUser` are not yet persisted
+anywhere (Phase 5) — sessions live only in the signed cookie itself. Auth-attempt audit
+logging and gating `/upload` behind login remain explicitly out of scope until a later
+phase actually needs them (see "Suggested additions" above and `docs/architecture.md`'s
+Phase 6 section).
 
 ### Known risks
 
@@ -670,17 +749,19 @@ corrected in Phase 9). `ScoringResult` is not yet persisted anywhere (Phase 5).
    than re-querying DNS/re-verifying signatures live — no `dnspython`/`dkimpy`
    dependency was introduced. Scoring stays deterministic and every authentication test
    is fully offline.
-3. **No built-in CSRF in FastAPI.** Unlike Django, FastAPI ships no CSRF protection.
-   Phase 6's login form (and any other session-authenticated POST route) needs an
-   explicitly added mechanism or CLAUDE.md's "secure defaults" requirement is violated.
+3. ~~**No built-in CSRF in FastAPI.**~~ **Resolved in Phase 6.** `app/core/security.py`
+   implements a double-submit cookie, applied to both `/login` and `/logout`.
 4. **Self-hosted runner attack surface.** A self-hosted GitHub Actions runner living on
    the production Ubuntu Server VM (Phase 9) is a real security consideration, not just
    a CI convenience — needs its own least-privilege review, not deferred entirely to
    Phase 10.
-5. **LDAPS/AD reachability.** Phase 6 depends on the Ubuntu VM trusting Windows Server
-   2025 AD's certificate chain over LDAPS — an infra dependency outside the app's
-   control. Unit tests mock this, but real connectivity must be verified against the
-   actual AD server before Phase 10 sign-off.
+5. **LDAPS/AD reachability — still open.** The app code enforces `ldaps://` and mocks
+   LDAP in every test (per CLAUDE.md, never a live bind in CI), but the Ubuntu VM
+   actually trusting Windows Server 2025 AD's certificate chain, having network access to
+   it on TCP 636, and a real least-privilege `APP_LDAP_BIND_DN` service account existing
+   are all infra dependencies outside the app's control. **Live connectivity has not yet
+   been verified against the real AD server** — that must happen before Phase 10
+   sign-off (see the VM-configuration checklist in the Phase 6 completion report).
 6. **Claude API availability.** Phase 7's fallback mode must be genuinely exercised, not
    just theoretical — a live demo (Phase 10) depends on graceful degradation if the API
    is slow, rate-limited, or down.

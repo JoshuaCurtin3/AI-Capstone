@@ -107,6 +107,37 @@ uvicorn app.main:app --reload
 - **Not yet implemented**: AI-generated explanations of a finding are Phase 7's job —
   each `Finding.explanation` here is a fixed, rule-authored sentence, not LLM output.
 
+## Active Directory authentication (Phase 6)
+
+- **Pages**: `/login` (GET renders the form, POST authenticates), `/logout`
+  (POST), `/account` — a minimal protected page (`Depends(require_user)`)
+  showing the logged-in user's info; demonstrates route protection end-to-end.
+  `/upload` is intentionally still public in this phase.
+- **LDAPS only, zero local passwords**: `app/auth/ldap_backend.py::authenticate()`
+  binds against Windows Server 2025 AD over LDAPS — a service account searches
+  for the user, then a second bind *as that user* with the submitted password
+  is the actual credential check. `APP_LDAP_SERVER_URI` must be `ldaps://`
+  (validated at startup); passwords are never compared locally or logged.
+- **Group authorization**: a user must belong to `APP_LDAP_REQUIRED_GROUP_DN`,
+  directly or via nested groups, to be authorized — nested membership is
+  resolved with a client-side, depth-capped, cycle-safe walk over each group's
+  own `memberOf` attribute (not AD's server-side matching-rule extension,
+  which isn't exercisable by `ldap3`'s mocked test strategy — see
+  [docs/architecture.md](docs/architecture.md)'s Phase 6 section for why).
+  Wrong credentials return a generic 401 (no username enumeration); correct
+  credentials but no group membership return a distinct 403.
+- **Sessions**: a custom signed cookie (`itsdangerous`, keyed off
+  `APP_SECRET_KEY`) — `HttpOnly` always, `Secure` when `APP_ENVIRONMENT=production`,
+  `SameSite=Lax`. `require_user` (in `app/auth/dependencies.py`) redirects an
+  unauthenticated request to `/login?next=<original path>`, so the user lands
+  back where they were headed after signing in.
+- **CSRF**: `app/core/security.py` implements a double-submit cookie, used by
+  both `/login` and `/logout` — FastAPI has no built-in CSRF protection, unlike
+  Django.
+- **Config**: see the `APP_LDAP_*` and `APP_SESSION_MAX_AGE_SECONDS` entries in
+  `.env.example`. Real credentials are environment-variable-only, never
+  committed, per CLAUDE.md.
+
 ## Running tests
 
 ```bash

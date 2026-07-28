@@ -5,6 +5,10 @@ jinja2>=3.1
 python-multipart>=0.0.9
 pydantic-settings>=2.4
 
+# --- Active Directory / LDAPS + signed session cookies (Phase 6) ---
+ldap3>=2.9
+itsdangerous>=2.2
+
 # --- Testing (Phase 2) ---
 pytest>=8.0
 httpx>=0.27
@@ -16,6 +20,5 @@ mypy>=1.10
 
 # --- Added in later phases, listed here for visibility only ---
 # psycopg2-binary, sqlalchemy, alembic         (Phase 5 — database)
-# ldap3                                        (Phase 6 — Active Directory)
 # anthropic                                    (Phase 7 — AI analysis)
 # gunicorn                                     (Phase 8 — deployment)

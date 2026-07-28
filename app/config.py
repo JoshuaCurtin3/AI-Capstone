@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,12 +24,42 @@ class Settings(BaseSettings):
     secret_key: str
 
     #: "development" or "production" — gates dev-only conveniences (e.g. the
-    #: interactive API docs) without duplicating a whole settings hierarchy.
+    #: interactive API docs, and the Secure flag on cookies) without
+    #: duplicating a whole settings hierarchy.
     environment: str = "development"
 
     #: Caps raw email size (pasted or uploaded) accepted by the /upload
     #: endpoint, bounding memory use during parsing (Phase 3 "safe parsing").
     max_email_upload_bytes: int = 10_000_000
+
+    # --- Active Directory / LDAPS (Phase 6) ---
+    #: e.g. "ldaps://ad.example.local:636" — must be ldaps://, never plain
+    #: ldap://, per CLAUDE.md's "LDAPS only" requirement; enforced below.
+    ldap_server_uri: str
+    #: Service account used only to search for a user's DN — never used to
+    #: validate a login password (that always happens via a bind-as-user).
+    ldap_bind_dn: str
+    ldap_bind_password: str
+    ldap_user_search_base_dn: str
+    #: DN of the AD group a user must belong to (directly or via nested
+    #: groups - see app/auth/ldap_backend.py) to be authorized to log in.
+    ldap_required_group_dn: str
+    ldap_user_login_attribute: str = "sAMAccountName"
+    ldap_connect_timeout_seconds: float = 5.0
+    #: Caps how many levels of nested (parent-of-parent) group membership
+    #: are walked before giving up - bounds worst-case LDAP round-trips and
+    #: guards against a misconfigured/cyclic group graph.
+    ldap_group_membership_max_depth: int = 6
+
+    # --- Session cookies (Phase 6) ---
+    session_max_age_seconds: int = 28_800  # 8 hours
+
+    @field_validator("ldap_server_uri")
+    @classmethod
+    def _require_ldaps_scheme(cls, value: str) -> str:
+        if not value.lower().startswith("ldaps://"):
+            raise ValueError("APP_LDAP_SERVER_URI must use the ldaps:// scheme (LDAPS only)")
+        return value
 
 
 @lru_cache

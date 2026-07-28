@@ -41,7 +41,8 @@ text. See CLAUDE.md for why this boundary is non-negotiable.
 | A new field on the parsed-email data contract    | `app/email_parser/schemas.py` |
 | A new persisted model for any domain             | that domain's own `models.py` (SQLAlchemy) + an Alembic revision |
 | A new HTTP endpoint                              | `app/api/v1/` (routing) — calls into `app/services/pipeline.py` |
-| A new AD/LDAP attribute needed at login          | `app/auth/ldap_backend.py` (and `app/auth/models.py` if it must be cached locally) |
+| A new AD/LDAP attribute needed at login          | `app/auth/ldap_backend.py` + `app/auth/schemas.py`'s `AuthenticatedUser` (and `app/auth/models.py` if it must be cached locally, Phase 5+) |
+| A new route requiring login                      | `Depends(app.auth.dependencies.require_user)` on the route - see `GET /account` in `app/auth/router.py` for a working example |
 | A cross-domain orchestration step                | `app/services/` |
 | A mixin/base class used by 2+ domain packages    | `app/models/`, `app/schemas/`, or `app/core/` as appropriate |
 | A generic helper with no domain ownership        | `app/utils/` |
@@ -93,14 +94,77 @@ text. See CLAUDE.md for why this boundary is non-negotiable.
   the registered handler be the single place that decides what to show,
   driven by `Settings.debug` at request time.
 
+## Authentication (Phase 6)
+
+- **LDAPS only, never local passwords.** `app/auth/ldap_backend.py::authenticate()`
+  is the only place a login password is ever handled, and it's never compared
+  locally - the real credential check is always a bind-as-user against Active
+  Directory itself. `Settings.ldap_server_uri` is validated at startup to require
+  the `ldaps://` scheme, and the backend also passes `use_ssl=True` explicitly to
+  `ldap3.Server(...)` as a second, code-level guarantee.
+- **Auth flow**: service-account bind (search-only) -> search for the user by
+  `Settings.ldap_user_login_attribute` (the filter escapes the username via
+  `ldap3.utils.conv.escape_filter_chars` to block LDAP filter injection) -> bind
+  **as that user** with the submitted password -> only if that succeeds, resolve
+  group authorization. Unknown username and wrong password both return `None`
+  from `authenticate()` (no way to distinguish them - avoids user enumeration); a
+  correct password but missing group membership is a separate case the router
+  turns into a `403`, since identity was already proven.
+- **Nested group membership is resolved client-side.** Active Directory's
+  server-side nested-group matching rule (`LDAP_MATCHING_RULE_IN_CHAIN`, OID
+  `1.2.840.113556.1.4.1941`) is not implemented by `ldap3`'s `MOCK_SYNC` test
+  strategy - a filter using it silently returns zero results against the mock.
+  Relying on it would ship an authorization-critical code path with no unit-test
+  coverage, which cuts against CLAUDE.md's testing requirements. Instead,
+  `_resolve_group_membership()` does a breadth-first walk outward from the
+  user's direct `memberOf` list, reading each parent group's own `memberOf`
+  attribute, bounded by `Settings.ldap_group_membership_max_depth` and a
+  visited-DN set (cycle safety) - fully expressible with plain LDAP search/read
+  operations, so it's fully covered by mocked tests.
+- **Session cookie**: a custom signed cookie
+  (`itsdangerous.URLSafeTimedSerializer`, keyed off the existing
+  `Settings.secret_key` - no new secret) in `app/auth/session.py`, not
+  Starlette's built-in `SessionMiddleware`, so the exact cookie flags are fully
+  controlled: `HttpOnly` always, `Secure` gated on
+  `Settings.environment == "production"` (mirrors the `docs_url` gating pattern
+  below so local dev over plain HTTP still works), `SameSite=Lax`.
+- **CSRF**: `app/core/security.py` implements a double-submit cookie (an
+  unpredictable token set as a cookie and also embedded as a hidden form field;
+  the two must match on submit). No server-side token store is needed, which
+  matters since there's no session established yet when `/login` itself is
+  submitted, and no database at all before Phase 5.
+- **Request-scoped auth context**: `app/auth/middleware.py::AuthContextMiddleware`
+  resolves `request.state.user` and `request.state.csrf_token` on every
+  request (reading the session cookie, minting a CSRF cookie if one doesn't
+  exist yet). This is auth-domain logic, so it lives under `app/auth/` per this
+  file's "domain-specific code lives in its domain package" rule, not in the
+  still-empty `app/core/middleware.py` stub. Templates read both directly off
+  `request.state` (Jinja2Templates always injects `request`), so `base.html`'s
+  navbar and the login/logout forms need nothing threaded through per-route.
+- **Redirect-preserving-next**: `app/auth/dependencies.py::require_user` raises
+  `app.auth.exceptions.AuthenticationRequiredError(next_path)` when there's no
+  valid session; a handler registered in `app/main.py` turns that into a `303`
+  redirect to `/login?next=<path>`. The `next` value is validated (must start
+  with a single `/`, never `//`, never contain `://`) to block open-redirect
+  abuse.
+- **`/upload` is intentionally still public.** Phase 6 only ships the auth
+  machinery itself; `GET /account` (gated by `Depends(require_user)`) is the
+  real, working demonstration of route protection. Gating `/upload` is a
+  decision left for whichever phase actually needs it.
+- **Independent of scoring.** Nothing in `app/auth/` is imported by
+  `app/phishing_detection/` or vice versa - the deterministic risk score stays
+  a pure function of a parsed email, per CLAUDE.md's core rule, regardless of
+  who is or isn't logged in.
+
 ## History: framework pivot
 
 This project originally scaffolded as Django, then moved to FastAPI +
 SQLAlchemy + Alembic (see TASKS.md Phase 1). Two points that fall out of that:
 
 - **FastAPI has no built-in CSRF protection.** Django did; FastAPI doesn't.
-  Any session-authenticated POST route (the Phase 6 login form, in
-  particular) needs an explicit CSRF mechanism added — see CLAUDE.md.
+  Any session-authenticated POST route needs an explicit CSRF mechanism added
+  — see CLAUDE.md. Implemented in Phase 6 as `app/core/security.py`'s
+  double-submit cookie, used by both `/login` and `/logout`.
 - **`app.auth`'s Django app-label collision note no longer applies.** That
   was a Django-specific `INSTALLED_APPS` concern; FastAPI has no equivalent
   app registry, so there's nothing to rename here.

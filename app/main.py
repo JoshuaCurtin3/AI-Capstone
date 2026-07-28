@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.health import router as health_router
 from app.api.v1.upload import router as upload_router
+from app.auth.exceptions import AuthenticationRequiredError
+from app.auth.middleware import AuthContextMiddleware
+from app.auth.router import router as auth_router
 from app.config import get_settings
 from app.core.logging import configure_logging
 from app.core.templates import templates
@@ -43,14 +47,31 @@ app = FastAPI(
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
+# Resolves request.state.user/csrf_token on every request - see
+# app/auth/middleware.py. Must run for every route, including /login itself
+# and 404s, which is why it's app-level middleware rather than a per-route
+# dependency.
+app.add_middleware(AuthContextMiddleware)
+
 app.include_router(health_router)
 app.include_router(upload_router)
+app.include_router(auth_router)
 
 
 @app.get("/")
 def index(request: Request) -> Response:
     """Render the home page."""
     return templates.TemplateResponse(request, "index.html")
+
+
+@app.exception_handler(AuthenticationRequiredError)
+async def authentication_required_handler(
+    request: Request, exc: AuthenticationRequiredError
+) -> Response:
+    """Redirect an unauthenticated request to /login, preserving the page
+    it was trying to reach via ?next= (see app/auth/dependencies.py).
+    """
+    return RedirectResponse(f"/login?next={quote(exc.next_path, safe='/')}", status_code=303)
 
 
 @app.exception_handler(StarletteHTTPException)

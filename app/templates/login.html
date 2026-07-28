@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — Sign in{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Sign in</h1>
+
+{% if error %}
+<div class="alert alert-danger" role="alert">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/login" class="col-md-6">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="mb-3">
+        <label for="username" class="form-label">Username</label>
+        <input
+            type="text"
+            class="form-control"
+            id="username"
+            name="username"
+            autocomplete="username"
+            required
+            autofocus>
+    </div>
+    <div class="mb-3">
+        <label for="password" class="form-label">Password</label>
+        <input
+            type="password"
+            class="form-control"
+            id="password"
+            name="password"
+            autocomplete="current-password"
+            required>
+    </div>
+    <button type="submit" class="btn btn-primary">Sign in</button>
+</form>
+<p class="text-muted small mt-3">Sign in with your Active Directory credentials.</p>
+{% endblock %}
