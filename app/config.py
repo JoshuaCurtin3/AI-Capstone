@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +16,15 @@ class Settings(BaseSettings):
     """Typed application settings sourced from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", env_prefix="APP_", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="APP_",
+        extra="ignore",
+        # Needed so ANTHROPIC_API_KEY (below) can be passed as the
+        # `anthropic_api_key` kwarg directly (e.g. from tests) in addition to
+        # its env-var alias - without this, pydantic-settings only accepts
+        # the alias for a field that declares one.
+        populate_by_name=True,
     )
 
     app_name: str = "Phishing Email Analyzer"
@@ -67,6 +75,20 @@ class Settings(BaseSettings):
 
     # --- Session cookies (Phase 6) ---
     session_max_age_seconds: int = 28_800  # 8 hours
+
+    # --- Claude API / AI explanations (Phase 7) ---
+    #: Read from the bare ANTHROPIC_API_KEY env var (the SDK's own convention),
+    #: not APP_ANTHROPIC_API_KEY - this is the same variable a developer would
+    #: set for any Anthropic SDK usage. Deliberately optional: the app must
+    #: start and email analysis must keep working with no key configured
+    #: (see CLAUDE.md) - app.ai_analysis.services checks this and returns a
+    #: "not configured" result instead of calling the API.
+    anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = "claude-opus-5"
+    #: Explanations are a few sentences of prose, not a long-form document -
+    #: capped low so a misbehaving prompt/response can't run up cost/latency.
+    anthropic_max_tokens: int = 500
+    anthropic_timeout_seconds: float = 15.0
 
     @field_validator("ldap_server_uri")
     @classmethod

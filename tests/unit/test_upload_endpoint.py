@@ -173,3 +173,26 @@ def test_upload_still_succeeds_when_persistence_fails(
     assert response.status_code == 200
     assert "Risk Score:" in response.text
     assert "SPF failed" in response.text
+
+
+def test_upload_shows_ai_fallback_message_when_no_api_key_configured(
+    client: TestClient,
+) -> None:
+    """Phase 7: with no ANTHROPIC_API_KEY set (the default test/CI environment
+    - see tests/conftest.py), the page still renders the full deterministic
+    result plus a safe fallback message in the AI Explanation section, and
+    makes no live Claude API call.
+    """
+    response = client.post(
+        "/upload",
+        files={"file": ("phishing.eml", _load("phishing.eml"), "message/rfc822")},
+    )
+
+    assert response.status_code == 200
+    assert "AI Explanation" in response.text
+    assert "AI explanation is currently unavailable. The deterministic analysis remains valid." in (
+        response.text
+    )
+    # Deterministic results are unaffected by AI availability.
+    assert "Risk Score:" in response.text
+    assert "SPF failed" in response.text

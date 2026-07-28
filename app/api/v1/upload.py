@@ -14,6 +14,8 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.ai_analysis.schemas import ExplanationResult
+from app.ai_analysis.services import FALLBACK_EXPLANATION_MESSAGE, generate_explanation
 from app.auth.dependencies import get_current_user
 from app.auth.services import get_or_create_user
 from app.config import Settings, get_settings
@@ -94,6 +96,8 @@ async def upload_submit(
 
     parsed: ParsedEmail | None = None
     scoring: ScoringResult | None = None
+    ai_explanation_text = FALLBACK_EXPLANATION_MESSAGE
+    ai_explanation_available = False
     if raw_bytes is not None and error is None:
         try:
             parsed = parse_email(raw_bytes, max_bytes=settings.max_email_upload_bytes)
@@ -102,10 +106,26 @@ async def upload_submit(
             # phishing_detection alone (see CLAUDE.md's core rule).
             scoring = calculate_risk_score(parsed)
             _persist_analysis(db, request, parsed, scoring)
+            # AI explanation runs strictly after scoring, reads the finished
+            # ScoringResult, and can never change it. Any failure (including
+            # "no API key configured") degrades to the fallback message
+            # below rather than affecting the deterministic result above.
+            ai_result: ExplanationResult = generate_explanation(scoring, parsed, settings=settings)
+            if ai_result.success and ai_result.explanation:
+                ai_explanation_text = ai_result.explanation
+                ai_explanation_available = True
         except EmailParsingError as exc:
             logger.warning("Failed to parse submitted email: %s", exc)
             error = str(exc)
 
     return templates.TemplateResponse(
-        request, "upload.html", {"parsed": parsed, "scoring": scoring, "error": error}
+        request,
+        "upload.html",
+        {
+            "parsed": parsed,
+            "scoring": scoring,
+            "error": error,
+            "ai_explanation_text": ai_explanation_text,
+            "ai_explanation_available": ai_explanation_available,
+        },
     )

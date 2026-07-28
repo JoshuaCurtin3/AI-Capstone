@@ -35,6 +35,13 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ.setdefault("APP_LDAP_BIND_PASSWORD", "test-bind-password")
     os.environ.setdefault("APP_LDAP_USER_SEARCH_BASE_DN", "OU=Users,DC=test,DC=invalid")
     os.environ.setdefault("APP_LDAP_REQUIRED_GROUP_DN", "CN=Required,OU=Groups,DC=test,DC=invalid")
+    # Force-cleared (not setdefault): a developer's shell may already export a
+    # real ANTHROPIC_API_KEY for unrelated work. Phase 7 tests must never make
+    # a live Claude API call under any circumstances (see CLAUDE.md/TASKS.md),
+    # so the test process always sees "unconfigured" regardless of the host
+    # environment. Tests that need a "configured" Settings pass
+    # anthropic_api_key explicitly to Settings(...) instead of relying on env.
+    os.environ["ANTHROPIC_API_KEY"] = ""
 
 
 @pytest.fixture
