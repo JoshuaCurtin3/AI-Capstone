@@ -1,4 +1,4 @@
-# AI-Capstone — Phishing Email Analyzer
+# AI-Capstone — Phishing Email Analyzer - Mason Gagnon & Josh Curtin
 
 A FastAPI web application that analyzes submitted emails and produces a phishing risk
 score. The risk score is always computed by a deterministic, rule-based scoring engine;
